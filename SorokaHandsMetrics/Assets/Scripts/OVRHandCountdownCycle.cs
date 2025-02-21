@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using UnityEngine;
 using TMPro;
 using Oculus.Interaction.HandGrab; // For TouchHandGrabInteractor
-using UnityEngine.UI;               // For Image and CanvasScaler
+using UnityEngine.UI;               // For Image
 using Oculus.Interaction;           // For InteractorState
 
 public class OVRHandCountdownCycle : MonoBehaviour {
@@ -11,11 +11,9 @@ public class OVRHandCountdownCycle : MonoBehaviour {
     [Tooltip("Assign the objects to be picked up in order.")]
     public GameObject[] targetObjects;
 
-    [Header("Floating Text Settings")]
-    [Tooltip("Distance from the camera where the floating text is displayed.")]
-    public float textDistance = 2.0f;
-    [Tooltip("Optional plane to hide after all cycles.")]
-    public GameObject plane;
+    [Header("Extra Objects")]
+    [Tooltip("Optional table object to hide after all cycles.")]
+    public GameObject table;
 
     [Header("Hand Tracking Settings")]
     [Tooltip("OVRSkeleton used to compute palm openness.")]
@@ -31,18 +29,12 @@ public class OVRHandCountdownCycle : MonoBehaviour {
     [Tooltip("Assign the TouchHandGrabInteractor component from your right hand.")]
     [SerializeField] private TouchHandGrabInteractor rightHandInteractor;
 
-    [Header("Results Popup")]
-    [Tooltip("Assign the TextMeshProUGUI element (already in your scene) that will display the results.")]
+    [Header("Results Popup (and Countdown)")]
+    [Tooltip("Assign the TextMeshProUGUI element (already in your scene) that will display the countdown messages and final results. Its parent should have an Image component for the background.")]
     public TextMeshProUGUI resultsPopupText;
 
-    [Header("Countdown Canvas")]
-    [Tooltip("Assign the Canvas used for countdown (its GameObject should have an Image component for background).")]
-    public Canvas countdownCanvas;
-
-    // Internal UI reference for the floating text.
-    private TextMeshProUGUI instructionText;
-    // We'll store the floating text canvas transform so we can update its position.
-    private Transform floatingCanvasTransform;
+    // Store the original background size.
+    private Vector2 originalBgSize;
 
     // Cycle counter and storage.
     private int currentCycle = 0;
@@ -53,7 +45,7 @@ public class OVRHandCountdownCycle : MonoBehaviour {
         public string objectName;
         public float timeToGrab;       // Time (in seconds) from text disappearance until grab.
         public float maxOpenness;      // Maximum palm openness (% 0–100) during the cycle.
-        public float initialOpenness;  // Palm openness (%) measured immediately when text disappears.
+        public float initialOpenness;  // Palm openness (% 0–100) measured immediately when text disappears.
         public float initialDistance;  // Distance (in meters) from the wrist to the object at cycle start.
         public float distanceAt30;     // Distance (in meters) from the wrist to the object when palm openness first exceeds 30%.
     }
@@ -62,21 +54,26 @@ public class OVRHandCountdownCycle : MonoBehaviour {
         if (handSkeleton == null) handSkeleton = GetComponent<OVRSkeleton>();
         if (hand == null) hand = GetComponent<OVRHand>();
 
-        // Create the floating text UI element attached to the main camera.
-        instructionText = CreateFloatingText(Camera.main.transform, textDistance);
+        if (resultsPopupText == null) {
+            Debug.LogWarning("Results Popup Text is not assigned in the Inspector!");
+        }
+        else {
+            // Center the text.
+            RectTransform textRect = resultsPopupText.GetComponent<RectTransform>();
+            textRect.anchorMin = new Vector2(0.5f, 0.5f);
+            textRect.anchorMax = new Vector2(0.5f, 0.5f);
+            textRect.anchoredPosition = Vector2.zero;
+
+            // Store the original background size.
+            Image bg = resultsPopupText.GetComponentInParent<Image>();
+            if (bg != null) {
+                RectTransform bgRect = bg.GetComponent<RectTransform>();
+                originalBgSize = bgRect.sizeDelta;
+            }
+        }
 
         // Begin the cycle coroutine.
         StartCoroutine(CycleCoroutine());
-    }
-
-    private void Update() {
-        if (Camera.main != null) {
-            Transform cam = Camera.main.transform;
-            if (floatingCanvasTransform != null) {
-                floatingCanvasTransform.position = cam.position + cam.forward * textDistance;
-                floatingCanvasTransform.rotation = cam.rotation;
-            }
-        }
     }
 
     private IEnumerator CycleCoroutine() {
@@ -85,37 +82,37 @@ public class OVRHandCountdownCycle : MonoBehaviour {
             CycleData cycleData = new CycleData();
             cycleData.objectName = currentObject.name;
 
-            // Set the countdown canvas background to semi-transparent black at the start of each cycle.
-            if (countdownCanvas != null) {
-                Image bg = countdownCanvas.GetComponent<Image>();
-                if (bg != null) {
-                    bg.color = new Color(0f, 0f, 0f, 0.7f);
-                }
-            }
+            // --- Countdown Sequence Setup ---
+            // Increase countdown text size (3x) and use a fixed small background.
+            float originalFontSize = resultsPopupText.fontSize;
+            float countdownFontSize = originalFontSize * 3f;
+            resultsPopupText.fontSize = countdownFontSize;
+            SetPopupBackgroundColor(new Color(0f, 0f, 0f, 0.7f));
 
-            // Ensure the floating text is enabled.
-            instructionText.enabled = true;
-
-            // --- Countdown Sequence ---
-            instructionText.text = "3";
+            // For each countdown step, update the text and re-center the background.
+            resultsPopupText.text = "3";
+            UpdateCountdownBackgroundSize();
             yield return new WaitForSeconds(1f);
-            instructionText.text = "2";
-            yield return new WaitForSeconds(1f);
-            instructionText.text = "1";
-            yield return new WaitForSeconds(1f);
-            instructionText.text = "Pick up the " + currentObject.name + "!";
-            yield return new WaitForSeconds(1f); // Display prompt for 1 second.
-            instructionText.text = "";          // Then clear the text.
 
-            // After clearing the text, set the canvas background to transparent.
-            if (countdownCanvas != null) {
-                Image bg = countdownCanvas.GetComponent<Image>();
-                if (bg != null) {
-                    bg.color = new Color(0f, 0f, 0f, 0f);
-                }
-            }
+            resultsPopupText.text = "2";
+            UpdateCountdownBackgroundSize();
+            yield return new WaitForSeconds(1f);
 
-            // --- Immediately After Text Disappears: Record Initial Metrics ---
+            resultsPopupText.text = "1";
+            UpdateCountdownBackgroundSize();
+            yield return new WaitForSeconds(1f);
+
+            resultsPopupText.text = "Pick up the " + currentObject.name + "!";
+            UpdateCountdownBackgroundSize();
+            yield return new WaitForSeconds(2.5f);
+
+            // Clear countdown text, revert font size, and restore background.
+            resultsPopupText.text = "";
+            SetPopupBackgroundColor(new Color(0f, 0f, 0f, 0f));
+            resultsPopupText.fontSize = originalFontSize;
+            RestorePopupBackgroundSize();
+
+            // --- Immediately After Countdown: Record Initial Metrics ---
             cycleData.initialOpenness = ComputePalmOpenness();
             Transform wrist = GetWristTransform();
             if (wrist != null) {
@@ -174,49 +171,57 @@ public class OVRHandCountdownCycle : MonoBehaviour {
             yield return new WaitForSeconds(1f);
         }
 
+        // Remove target objects from the scene.
         foreach (GameObject obj in targetObjects) {
             if (obj != null)
                 obj.SetActive(false);
         }
-        if (plane != null)
-            plane.SetActive(false);
+        // Also remove the table.
+        if (table != null)
+            table.SetActive(false);
 
-        // Before showing results, set the countdown canvas background back to semi-transparent black.
-        if (countdownCanvas != null) {
-            Image bg = countdownCanvas.GetComponent<Image>();
-            if (bg != null) {
-                bg.color = new Color(0f, 0f, 0f, 0.7f);
-            }
-        }
+        // Before showing results, set background to semi-transparent black.
+        SetPopupBackgroundColor(new Color(0f, 0f, 0f, 0.7f));
         ShowResultsPopup();
     }
 
-    private TextMeshProUGUI CreateFloatingText(Transform parent, float distance) {
-        GameObject canvasObj = new GameObject("FloatingCanvas");
-        Canvas canvas = canvasObj.AddComponent<Canvas>();
-        canvas.renderMode = RenderMode.WorldSpace;
-        CanvasScaler scaler = canvasObj.AddComponent<CanvasScaler>();
-        scaler.dynamicPixelsPerUnit = 5000f;
+    /// <summary>
+    /// Sets the countdown background size to a fixed 6f x 3f and repositions it so that its center aligns with the center of the floating text.
+    /// </summary>
+    private void UpdateCountdownBackgroundSize() {
+        Image bg = resultsPopupText.GetComponentInParent<Image>();
+        if (bg != null) {
+            RectTransform bgRect = bg.GetComponent<RectTransform>();
+            // Set the fixed size.
+            bgRect.sizeDelta = new Vector2(6f, 3f);
+            // Adjust the background position so its center aligns with the visible text.
+            // We use the textBounds.center from the TextMeshPro component.
+            Vector2 textCenter = resultsPopupText.textBounds.center;
+            // Since the text is top-aligned, the visible text center is offset from the text container’s center.
+            // Shift the background vertically by the negative of the textBounds center y value.
+            bgRect.anchoredPosition = new Vector2(bgRect.anchoredPosition.x, textCenter.y + 2f);
+        }
+    }
 
-        canvasObj.transform.SetParent(parent);
-        floatingCanvasTransform = canvasObj.transform;
-        canvasObj.transform.localPosition = new Vector3(0, 0, distance);
-        canvasObj.transform.localRotation = Quaternion.identity;
-        canvasObj.transform.localScale = Vector3.one * 0.001f;
+    /// <summary>
+    /// Restores the background size for the popup.
+    /// </summary>
+    private void RestorePopupBackgroundSize() {
+        Image bg = resultsPopupText.GetComponentInParent<Image>();
+        if (bg != null) {
+            RectTransform bgRect = bg.GetComponent<RectTransform>();
+            bgRect.sizeDelta = originalBgSize;
+        }
+    }
 
-        GameObject textObj = new GameObject("InstructionText");
-        textObj.transform.SetParent(canvasObj.transform);
-        TextMeshProUGUI tmpText = textObj.AddComponent<TextMeshProUGUI>();
-        tmpText.fontSize = 5;
-        tmpText.alignment = TextAlignmentOptions.Center;
-        tmpText.color = Color.white;
-
-        RectTransform rectTransform = tmpText.GetComponent<RectTransform>();
-        rectTransform.sizeDelta = new Vector2(200, 50);
-        rectTransform.anchoredPosition3D = Vector3.zero;
-
-        tmpText.text = "";
-        return tmpText;
+    /// <summary>
+    /// Sets the background color of the popup's parent image.
+    /// </summary>
+    private void SetPopupBackgroundColor(Color color) {
+        Image bg = resultsPopupText.GetComponentInParent<Image>();
+        if (bg != null) {
+            bg.color = color;
+        }
     }
 
     private float ComputePalmOpenness() {
@@ -252,26 +257,34 @@ public class OVRHandCountdownCycle : MonoBehaviour {
         return null;
     }
 
+    /// <summary>
+    /// Updates the background size for the final results popup to be slightly larger than the text.
+    /// </summary>
+    private void UpdateResultsPopupBackgroundSize() {
+        Image bg = resultsPopupText.GetComponentInParent<Image>();
+        if (bg != null) {
+            RectTransform bgRect = bg.GetComponent<RectTransform>();
+            bgRect.sizeDelta = new Vector2(10f, 7f);
+        }
+    }
+
     private void ShowResultsPopup() {
         if (resultsPopupText == null) {
             Debug.LogWarning("Results Popup Text is not assigned in the Inspector!");
             return;
-        }
-        Image panelImage = resultsPopupText.GetComponentInParent<Image>();
-        if (panelImage != null) {
-            panelImage.color = new Color(0f, 0f, 0f, 0.7f);
         }
         List<string> lines = new List<string>();
         foreach (CycleData data in cycleDataList) {
             string line =
                 $"<color=#FF69B4>{data.objectName}</color>:\n" +
                 $"Total Time(s): <color=orange>{data.timeToGrab:F2}</color>, " +
-                $"MaxOpenness(%): <color=orange>{data.maxOpenness:F1}</color>, " +
+                $"Max Openness(%): <color=orange>{data.maxOpenness:F1}</color>, " +
                 $"Initial Distance(m): <color=orange>{data.initialDistance:F2}</color>, " +
-                $"Open Palm Distance: <color=orange>{data.distanceAt30:F2}</color>";
+                $"Distance at 30% Openness: <color=orange>{data.distanceAt30:F2}</color>";
             lines.Add(line);
         }
         string finalText = string.Join("\n\n", lines);
         resultsPopupText.text = finalText;
+        UpdateResultsPopupBackgroundSize();
     }
 }
