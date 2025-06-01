@@ -7,6 +7,16 @@ using UnityEngine.UI;               // For Image
 using Oculus.Interaction;           // For InteractorState
 
 public class OVRHandCountdownCycle : MonoBehaviour {
+    [Header("Audio Settings")]
+    [Tooltip("AudioSource to play instruction clips.")]
+    public AudioSource audioSource;
+
+    [Tooltip("Audio clip saying 'Pick up the'.")]
+    public AudioClip pickUpTheClip;
+
+    [Tooltip("Audio clips for each object's name, in order.")]
+    public AudioClip[] objectNameClips;
+
     [Header("Target Objects")]
     [Tooltip("Assign the objects to be picked up in order.")]
     public GameObject[] targetObjects;
@@ -90,21 +100,15 @@ public class OVRHandCountdownCycle : MonoBehaviour {
             SetPopupBackgroundColor(new Color(0f, 0f, 0f, 0.7f));
 
             // For each countdown step, update the text and re-center the background.
-            resultsPopupText.text = "3";
-            UpdateCountdownBackgroundSize();
-            yield return new WaitForSeconds(1f);
-
-            resultsPopupText.text = "2";
-            UpdateCountdownBackgroundSize();
-            yield return new WaitForSeconds(1f);
-
-            resultsPopupText.text = "1";
-            UpdateCountdownBackgroundSize();
-            yield return new WaitForSeconds(1f);
+            
 
             resultsPopupText.text = "Pick up the " + currentObject.name + "!";
             UpdateCountdownBackgroundSize();
-            yield return new WaitForSeconds(2.5f);
+            // Start playing the voice instruction
+            if (audioSource != null && pickUpTheClip != null && objectNameClips != null && currentCycle < objectNameClips.Length) {
+                StartCoroutine(PlayInstructionAudio(currentCycle));
+            }
+            yield return new WaitForSeconds(3.5f);
 
             // Clear countdown text, revert font size, and restore background.
             resultsPopupText.text = "";
@@ -286,5 +290,17 @@ public class OVRHandCountdownCycle : MonoBehaviour {
         string finalText = string.Join("\n\n", lines);
         resultsPopupText.text = finalText;
         UpdateResultsPopupBackgroundSize();
+    }
+
+    private IEnumerator PlayInstructionAudio(int objectIndex) {
+        // Play "Pick up the"
+        audioSource.clip = pickUpTheClip;
+        audioSource.Play();
+        yield return new WaitForSeconds(audioSource.clip.length + 0.05f); // wait for it to finish
+
+        // Play object name
+        audioSource.clip = objectNameClips[objectIndex];
+        audioSource.Play();
+        yield return new WaitForSeconds(audioSource.clip.length + 0.05f); // wait for object name to finish
     }
 }
