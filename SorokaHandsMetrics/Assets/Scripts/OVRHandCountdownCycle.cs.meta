@@ -3,7 +3,13 @@ guid: 9df6b37344db3d9448832ded4f7b0d10
 MonoImporter:
   externalObjects: {}
   serializedVersion: 2
-  defaultReferences: []
+  defaultReferences:
+  - objectsParent: {instanceID: 0}
+  - table: {instanceID: 0}
+  - handSkeleton: {instanceID: 0}
+  - hand: {instanceID: 0}
+  - rightHandInteractor: {instanceID: 0}
+  - resultsPopupText: {instanceID: 0}
   executionOrder: 0
   icon: {instanceID: 0}
   userData: 

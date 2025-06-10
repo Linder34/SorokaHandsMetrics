@@ -5,11 +5,14 @@ using TMPro;
 using Oculus.Interaction.HandGrab; // For TouchHandGrabInteractor
 using UnityEngine.UI;               // For Image
 using Oculus.Interaction;           // For InteractorState
+using UnityEngine.SceneManagement;
+using System.Linq;
+
 
 public class OVRHandCountdownCycle : MonoBehaviour {
-    [Header("Target Objects")]
-    [Tooltip("Assign the objects to be picked up in order.")]
-    public GameObject[] targetObjects;
+    [Header("Target Objects Container")]
+    [Tooltip("Assign the parent GameObject that contains all target objects as children.")]
+    public Transform objectsParent;
 
     [Header("Extra Objects")]
     [Tooltip("Optional table object to hide after all cycles.")]
@@ -33,6 +36,10 @@ public class OVRHandCountdownCycle : MonoBehaviour {
     [Tooltip("Assign the TextMeshProUGUI element (already in your scene) that will display the countdown messages and final results. Its parent should have an Image component for the background.")]
     public TextMeshProUGUI resultsPopupText;
 
+    [Header("Restart Settings")]
+    [Tooltip("Drag here the InteractableUnityEventWrapper from your BigRedButton/Button child so we can hook into OnSelectEntered.")]
+    [SerializeField] private InteractableUnityEventWrapper restartButtonWrapper;
+
     // Store the original background size.
     private Vector2 originalBgSize;
 
@@ -40,17 +47,39 @@ public class OVRHandCountdownCycle : MonoBehaviour {
     private int currentCycle = 0;
     private List<CycleData> cycleDataList = new List<CycleData>();
 
+    // Runtime array of target objects.
+    private GameObject[] targetObjects;
+
     // Structure to hold per-cycle metrics.
     private class CycleData {
         public string objectName;
-        public float timeToGrab;       // Time (in seconds) from text disappearance until grab.
-        public float maxOpenness;      // Maximum palm openness (% 0–100) during the cycle.
-        public float initialOpenness;  // Palm openness (% 0–100) measured immediately when text disappears.
-        public float initialDistance;  // Distance (in meters) from the wrist to the object at cycle start.
-        public float distanceAt30;     // Distance (in meters) from the wrist to the object when palm openness first exceeds 30%.
+        public float timeToGrab;
+        public float maxOpenness;
+        public float initialOpenness;
+        public float initialDistance;
+        public float distanceAt30;
     }
 
     private void Start() {
+        // ————— your original initialization —————
+        if (objectsParent == null) {
+            Debug.LogError("Please assign the Objects parent in the Inspector!");
+            return;
+        }
+        //var tennisBall = objectsParent.Find("Tennis Ball")?.gameObject;
+        //var plasticCup = objectsParent.Find("Plastic Cup")?.gameObject;
+        //var capsule = objectsParent.Find("Capsule")?.gameObject;
+        //var coffeeMug = objectsParent.Find("Coffee Mug")?.gameObject;
+        //var cube = objectsParent.Find("Cube")?.gameObject;
+        //targetObjects = new GameObject[] { tennisBall, plasticCup, capsule, coffeeMug, cube };
+        targetObjects = objectsParent
+        .Cast<Transform>()
+        .Where(t => t.name != "Plane" && t.name != "BottlePlane")
+        .OrderBy(_ => Random.value)        // Random.value is [0..1)
+        .Select(t => t.gameObject)
+        .ToArray();
+        
+
         if (handSkeleton == null) handSkeleton = GetComponent<OVRSkeleton>();
         if (hand == null) hand = GetComponent<OVRHand>();
 
@@ -58,13 +87,11 @@ public class OVRHandCountdownCycle : MonoBehaviour {
             Debug.LogWarning("Results Popup Text is not assigned in the Inspector!");
         }
         else {
-            // Center the text.
             RectTransform textRect = resultsPopupText.GetComponent<RectTransform>();
             textRect.anchorMin = new Vector2(0.5f, 0.5f);
             textRect.anchorMax = new Vector2(0.5f, 0.5f);
             textRect.anchoredPosition = Vector2.zero;
 
-            // Store the original background size.
             Image bg = resultsPopupText.GetComponentInParent<Image>();
             if (bg != null) {
                 RectTransform bgRect = bg.GetComponent<RectTransform>();
@@ -72,98 +99,70 @@ public class OVRHandCountdownCycle : MonoBehaviour {
             }
         }
 
-        // Begin the cycle coroutine.
+        // ————— subscribe restart callback —————
+        if (restartButtonWrapper != null) {
+            restartButtonWrapper.WhenSelect.AddListener(RestartScene);
+            //restartButtonWrapper.SetActive(false);
+        }
+        else {
+            Debug.LogWarning("RestartButtonWrapper not assigned; scene restart won't work.");
+        }
+
         StartCoroutine(CycleCoroutine());
     }
 
+
     private IEnumerator CycleCoroutine() {
         while (currentCycle < targetObjects.Length) {
-            GameObject currentObject = targetObjects[currentCycle];
-            CycleData cycleData = new CycleData();
-            cycleData.objectName = currentObject.name;
+            var currentObject = targetObjects[currentCycle];
+            var cycleData = new CycleData { objectName = currentObject.name };
 
-            // --- Countdown Sequence Setup ---
-            // Increase countdown text size (3x) and use a fixed small background.
+            // Countdown
             float originalFontSize = resultsPopupText.fontSize;
-            float countdownFontSize = originalFontSize * 3f;
-            resultsPopupText.fontSize = countdownFontSize;
+            resultsPopupText.fontSize = originalFontSize * 3f;
             SetPopupBackgroundColor(new Color(0f, 0f, 0f, 0.7f));
 
-            // For each countdown step, update the text and re-center the background.
-            resultsPopupText.text = "3";
-            UpdateCountdownBackgroundSize();
-            yield return new WaitForSeconds(1f);
-
-            resultsPopupText.text = "2";
-            UpdateCountdownBackgroundSize();
-            yield return new WaitForSeconds(1f);
-
-            resultsPopupText.text = "1";
-            UpdateCountdownBackgroundSize();
-            yield return new WaitForSeconds(1f);
-
-            resultsPopupText.text = "Pick up the " + currentObject.name + "!";
+            for (int i = 3; i > 0; i--) {
+                resultsPopupText.text = i.ToString();
+                UpdateCountdownBackgroundSize();
+                yield return new WaitForSeconds(1f);
+            }
+            resultsPopupText.text = $"Pick up the {currentObject.name}!";
             UpdateCountdownBackgroundSize();
             yield return new WaitForSeconds(2.5f);
 
-            // Clear countdown text, revert font size, and restore background.
             resultsPopupText.text = "";
             SetPopupBackgroundColor(new Color(0f, 0f, 0f, 0f));
             resultsPopupText.fontSize = originalFontSize;
             RestorePopupBackgroundSize();
 
-            // --- Immediately After Countdown: Record Initial Metrics ---
+            // Initial metrics
             cycleData.initialOpenness = ComputePalmOpenness();
-            Transform wrist = GetWristTransform();
-            if (wrist != null) {
-                cycleData.initialDistance = Vector3.Distance(wrist.position, currentObject.transform.position);
-            }
-            else {
-                cycleData.initialDistance = 0f;
-            }
+            var wrist = GetWristTransform();
+            cycleData.initialDistance = wrist != null ? Vector3.Distance(wrist.position, currentObject.transform.position) : 0f;
 
-            // --- Start Tracking Cycle Data ---
-            float cycleStartTime = Time.time;
+            float startTime = Time.time;
             float maxOpenness = cycleData.initialOpenness;
-            bool distanceAt30Recorded = false;
-
-            if (rightHandInteractor == null) {
-                yield break;
-            }
+            bool recorded30 = false;
 
             while (rightHandInteractor.State != InteractorState.Select) {
-                float currentOpenness = ComputePalmOpenness();
-                if (currentOpenness > maxOpenness)
-                    maxOpenness = currentOpenness;
-                if (!distanceAt30Recorded && currentOpenness >= 30f) {
-                    wrist = GetWristTransform();
-                    if (wrist != null) {
-                        cycleData.distanceAt30 = Vector3.Distance(wrist.position, currentObject.transform.position);
-                        distanceAt30Recorded = true;
-                    }
+                float openness = ComputePalmOpenness();
+                maxOpenness = Mathf.Max(maxOpenness, openness);
+                if (!recorded30 && openness >= 30f && wrist != null) {
+                    cycleData.distanceAt30 = Vector3.Distance(wrist.position, currentObject.transform.position);
+                    recorded30 = true;
                 }
                 yield return null;
             }
 
-            cycleData.timeToGrab = Time.time - cycleStartTime;
+            cycleData.timeToGrab = Time.time - startTime;
             cycleData.maxOpenness = maxOpenness;
-            Debug.Log(
-                $"[{currentObject.name}] Cycle Metrics:\n" +
-                $"Initial Distance: {cycleData.initialDistance:F2} m\n" +
-                $"Distance at 30% Openness: {cycleData.distanceAt30:F2} m\n" +
-                $"Time to Grab: {cycleData.timeToGrab:F2} sec\n" +
-                $"Max Palm Openness: {cycleData.maxOpenness:F1}%"
-            );
+            Debug.Log($"[{currentObject.name}] Distance start: {cycleData.initialDistance:F2}m, at30%: {cycleData.distanceAt30:F2}m, time: {cycleData.timeToGrab:F2}s, maxOpen: {cycleData.maxOpenness:F1}%");
 
-            float releaseTimeout = 2f;
-            float releaseTimer = 0f;
-            while (rightHandInteractor.State == InteractorState.Select && releaseTimer < releaseTimeout) {
+            float timer = 0f;
+            while (rightHandInteractor.State == InteractorState.Select && timer < 2f) {
+                timer += Time.deltaTime;
                 yield return null;
-                releaseTimer += Time.deltaTime;
-            }
-
-            if (releaseTimer >= releaseTimeout) {
-                Debug.LogWarning($"Timeout waiting for release of {currentObject.name}. Continuing to next cycle.");
             }
 
             cycleDataList.Add(cycleData);
@@ -171,16 +170,9 @@ public class OVRHandCountdownCycle : MonoBehaviour {
             yield return new WaitForSeconds(1f);
         }
 
-        // Remove target objects from the scene.
-        foreach (GameObject obj in targetObjects) {
-            if (obj != null)
-                obj.SetActive(false);
-        }
-        // Also remove the table.
-        if (table != null)
-            table.SetActive(false);
+        foreach (var obj in targetObjects) if (obj != null) obj.SetActive(false);
+        if (table != null) table.SetActive(false);
 
-        // Before showing results, set background to semi-transparent black.
         SetPopupBackgroundColor(new Color(0f, 0f, 0f, 0.7f));
         ShowResultsPopup();
     }
@@ -286,5 +278,11 @@ public class OVRHandCountdownCycle : MonoBehaviour {
         string finalText = string.Join("\n\n", lines);
         resultsPopupText.text = finalText;
         UpdateResultsPopupBackgroundSize();
+    }
+
+    private void RestartScene() {
+        //restartButtonWrapper.SetActive(true);
+        SceneManager.LoadScene(SceneManager.GetActiveScene().buildIndex);
+        foreach (var obj in targetObjects) if (obj != null && !obj.activeSelf) obj.SetActive(true);
     }
 }
