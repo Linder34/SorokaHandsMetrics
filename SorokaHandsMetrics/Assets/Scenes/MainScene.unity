@@ -348,17 +348,17 @@ RectTransform:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 165585583}
-  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: 0, z: 10}
+  m_LocalRotation: {x: 0, y: 0.60876137, z: 0, w: 0.7933534}
+  m_LocalPosition: {x: 0, y: 0, z: 1}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children:
   - {fileID: 85050636}
   m_Father: {fileID: 0}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 75, z: 0}
   m_AnchorMin: {x: 0, y: 0}
   m_AnchorMax: {x: 0, y: 0}
-  m_AnchoredPosition: {x: 0, y: -1}
+  m_AnchoredPosition: {x: 8, y: -1}
   m_SizeDelta: {x: 9, y: 6}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &165585588
@@ -830,11 +830,11 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 7516989854395125638, guid: d2d6934a666a18d46b8b7a3864dc9f63, type: 3}
       propertyPath: m_LocalPosition.y
-      value: 1.1
+      value: 0.653
       objectReference: {fileID: 0}
     - target: {fileID: 7516989854395125638, guid: d2d6934a666a18d46b8b7a3864dc9f63, type: 3}
       propertyPath: m_LocalPosition.z
-      value: 0.3
+      value: -0.905
       objectReference: {fileID: 0}
     - target: {fileID: 7516989854395125638, guid: d2d6934a666a18d46b8b7a3864dc9f63, type: 3}
       propertyPath: m_LocalRotation.w
@@ -1122,7 +1122,7 @@ MonoBehaviour:
   SpawnAmount: 1
   MaxIterations: 1000
   SpawnLocations: 3
-  Labels: 512
+  Labels: -1
   CheckOverlaps: 0
   OverrideBounds: -1
   LayerMask:
@@ -1188,6 +1188,7 @@ MonoBehaviour:
   rightHandInteractor: {fileID: 685595565}
   resultsPopupText: {fileID: 85050637}
   restartButtonWrapper: {fileID: 782628376}
+  outputFileName: results.csv
 --- !u!1 &1863785887
 GameObject:
   m_ObjectHideFlags: 0

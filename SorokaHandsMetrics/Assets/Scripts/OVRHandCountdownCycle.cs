@@ -7,6 +7,7 @@ using UnityEngine.UI;               // For Image
 using Oculus.Interaction;           // For InteractorState
 using UnityEngine.SceneManagement;
 using System.Linq;
+using System.IO;     // for File & StreamWriter
 
 
 public class OVRHandCountdownCycle : MonoBehaviour {
@@ -40,6 +41,11 @@ public class OVRHandCountdownCycle : MonoBehaviour {
     [Tooltip("Drag here the InteractableUnityEventWrapper from your BigRedButton/Button child so we can hook into OnSelectEntered.")]
     [SerializeField] private InteractableUnityEventWrapper restartButtonWrapper;
 
+    [SerializeField] private string outputFileName = "results.csv";
+    private string CsvPath => Path.Combine(Application.persistentDataPath, outputFileName);
+
+    private bool _resultsSaved = false;
+
     // Store the original background size.
     private Vector2 originalBgSize;
 
@@ -66,12 +72,9 @@ public class OVRHandCountdownCycle : MonoBehaviour {
             Debug.LogError("Please assign the Objects parent in the Inspector!");
             return;
         }
-        //var tennisBall = objectsParent.Find("Tennis Ball")?.gameObject;
-        //var plasticCup = objectsParent.Find("Plastic Cup")?.gameObject;
-        //var capsule = objectsParent.Find("Capsule")?.gameObject;
-        //var coffeeMug = objectsParent.Find("Coffee Mug")?.gameObject;
-        //var cube = objectsParent.Find("Cube")?.gameObject;
-        //targetObjects = new GameObject[] { tennisBall, plasticCup, capsule, coffeeMug, cube };
+
+        HideRealObjects();
+        
         targetObjects = objectsParent
         .Cast<Transform>()
         .Where(t => t.name != "Plane" && t.name != "BottlePlane")
@@ -109,6 +112,23 @@ public class OVRHandCountdownCycle : MonoBehaviour {
         }
 
         StartCoroutine(CycleCoroutine());
+    }
+
+    public void HideRealObjects() {
+        if (objectsParent == null) {
+            Debug.LogWarning("SetupSceneController: objectsParent is not assigned!");
+            return;
+        }
+
+        foreach (Transform child in objectsParent) {
+            if (child.name == "Real Phone" ||
+                child.name == "Real Wallet" ||
+                child.name == "Real Bottle") {
+                var mr = child.GetComponent<MeshRenderer>();
+                if (mr != null)
+                    mr.enabled = false;
+            }
+        }
     }
 
 
@@ -272,17 +292,89 @@ public class OVRHandCountdownCycle : MonoBehaviour {
                 $"Total Time(s): <color=orange>{data.timeToGrab:F2}</color>, " +
                 $"Max Openness(%): <color=orange>{data.maxOpenness:F1}</color>, " +
                 $"Initial Distance(m): <color=orange>{data.initialDistance:F2}</color>, " +
-                $"Distance at 30% Openness: <color=orange>{data.distanceAt30:F2}</color>";
+                $"Distance Palm Opened(m): <color=orange>{data.distanceAt30:F2}</color>";
             lines.Add(line);
         }
         string finalText = string.Join("\n\n", lines);
         resultsPopupText.text = finalText;
         UpdateResultsPopupBackgroundSize();
+
+        WriteCsvAll();
+        _resultsSaved = true;
+
     }
 
     private void RestartScene() {
-        //restartButtonWrapper.SetActive(true);
+        if (!_resultsSaved) {
+            // pad out zero-entries for any untested objects
+            for (int i = currentCycle; i < targetObjects.Length; i++) {
+                cycleDataList.Add(new CycleData
+                {
+                    objectName = targetObjects[i].name,
+                    timeToGrab = 0f,
+                    maxOpenness = 0f,
+                    initialOpenness = 0f,
+                    initialDistance = 0f,
+                    distanceAt30 = 0f
+                });
+            }
+
+            // write the partial results once
+            WriteCsvAll();
+            _resultsSaved = true;
+        }
+
+        // reload the scene for a fresh test
         SceneManager.LoadScene(SceneManager.GetActiveScene().buildIndex);
         foreach (var obj in targetObjects) if (obj != null && !obj.activeSelf) obj.SetActive(true);
+    }
+
+    /// <summary>
+    /// Appends one CycleData as a CSV row.  Creates the file + header if needed.
+    /// </summary>
+    private void AppendCsvLine(CycleData d) {
+        bool isNew = !File.Exists(CsvPath);
+
+        using (var sw = new StreamWriter(CsvPath, append: true)) {
+            if (isNew) {
+                // write header only once
+                sw.WriteLine("ExperimentID,ObjectName,TotalTime_s,MaxOpenness_pct,InitialDistance_m,DistancePalmOpened_m");
+            }
+            // replace DateTime.Now if you want a persistent experiment ID
+            string experimentId = System.DateTime.Now.ToString("yyyy-MM-dd_HH-mm-ss");
+            sw.WriteLine($"{experimentId}," +
+                         $"{d.objectName}," +
+                         $"{d.timeToGrab:F2}," +
+                         $"{d.maxOpenness:F1}," +
+                         $"{d.initialDistance:F2}," +
+                         $"{d.distanceAt30:F2}");
+        }
+
+        Debug.Log($"[CSV] Appended {d.objectName} to {CsvPath}");
+    }
+
+    private void WriteCsvAll() {
+        string path = CsvPath;
+        bool isNew = !File.Exists(path);
+
+        using (var sw = new StreamWriter(path, append: true)) {
+            if (isNew) {
+                sw.WriteLine(
+                  "ExperimentID,ObjectName,TotalTime_s,MaxOpenness_pct,InitialDistance_m,DistancePalmOpened_m"
+                );
+            }
+
+            string experimentId = System.DateTime.Now.ToString("yyyy-MM-dd_HH-mm-ss");
+            foreach (var d in cycleDataList) {
+                sw.WriteLine($"{experimentId}," +
+                             $"{d.objectName}," +
+                             $"{d.timeToGrab:F2}," +
+                             $"{d.maxOpenness:F1}," +
+                             $"{d.initialDistance:F2}," +
+                             $"{d.distanceAt30:F2}");
+            }
+        }
+
+        Debug.Log($"[CSV] Wrote full test ({cycleDataList.Count} rows) to {path}");
     }
 }
