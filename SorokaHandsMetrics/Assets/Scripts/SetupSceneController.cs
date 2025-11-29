@@ -50,12 +50,12 @@ public class SetupSceneController : MonoBehaviour {
         }
 
         foreach (Transform child in objectsParent) {
-            if (child.name == "Real Phone" ||
-                child.name == "Real Wallet" ||
-                child.name == "Real Bottle") {
-                var mr = child.GetComponent<MeshRenderer>();
-                if (mr != null)
-                    mr.enabled = true;
+            if (child.name.Contains("Real")) {
+                // Disable ALL MeshRenderers under this object
+                MeshRenderer[] renderers = child.GetComponentsInChildren<MeshRenderer>(true);
+                foreach (var r in renderers) {
+                    r.enabled = true;
+                }
             }
         }
     }
