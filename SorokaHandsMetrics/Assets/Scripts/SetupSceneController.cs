@@ -11,6 +11,7 @@ public class SetupSceneController : MonoBehaviour {
     public string mainSceneName = "MainScene";
     public string setupSceneName = "SetupScene";
     public string mainMenuSceneName = "MainMenuScene";
+    public string mainSceneTestName = "MainSceneTest";
 
     void Start() {
         ShowRealObjects();
@@ -26,9 +27,19 @@ public class SetupSceneController : MonoBehaviour {
         SceneManager.LoadScene(setupSceneName);
     }
 
+    // Called by mainSceneTestButton
+    public void MainSceneTest() {
+        SceneManager.LoadScene(mainSceneTestName);
+    }
+
     // Called by MainMenuButton
     public void MainMenuScene() {
         SceneManager.LoadScene(mainMenuSceneName);
+    }
+
+    public void MainSceneTestIfOn(bool isOn) {
+        FileLogger.Log("[UI] Toggle turned ON -> calling MainSceneTest()");
+        MainSceneTest();
     }
 
     // Called by ExitButton

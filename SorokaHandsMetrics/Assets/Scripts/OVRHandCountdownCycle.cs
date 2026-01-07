@@ -1,18 +1,21 @@
 ﻿using System.Collections;
 using System.Collections.Generic;
+using System.Linq;
+using System.IO;
 using UnityEngine;
 using TMPro;
-using Oculus.Interaction.HandGrab; // For TouchHandGrabInteractor
-using UnityEngine.UI;               // For Image
-using Oculus.Interaction;           // For InteractorState
+using Oculus.Interaction;
+using Oculus.Interaction.HandGrab;
 using UnityEngine.SceneManagement;
-using System.Linq;
-using System.IO;     // for File & StreamWriter
 
 public class OVRHandCountdownCycle : MonoBehaviour {
-    [Header("Target Objects Container")]
-    [Tooltip("Assign the parent GameObject that contains all target objects as children.")]
-    public Transform objectsParent;
+    
+
+
+    [Header("Objects Sets (assign both)")]
+    [SerializeField] private Transform objects1Parent; // drag "Objects"
+    [SerializeField] private Transform objects2Parent; // drag "Objects2"
+    private Transform objectsParent;
 
     [Header("Extra Objects")]
     [Tooltip("Optional table object to hide after all cycles.")]
@@ -21,10 +24,13 @@ public class OVRHandCountdownCycle : MonoBehaviour {
     [Header("Hand Tracking Settings")]
     [Tooltip("OVRSkeleton used to compute palm openness.")]
     public OVRSkeleton handSkeleton;
+
     [Tooltip("Optional OVRHand (used to check tracking status).")]
     public OVRHand hand;
+
     [Tooltip("Average distance (meters) when the hand is fully closed.")]
-    public float closedThreshold = 0.02f; // Adjusted for index/thumb calculation
+    public float closedThreshold = 0.02f;
+
     [Tooltip("Average distance (meters) when the hand is fully open.")]
     public float openThreshold = 0.15f;
 
@@ -32,34 +38,36 @@ public class OVRHandCountdownCycle : MonoBehaviour {
     [Tooltip("Assign the TouchHandGrabInteractor component from your right hand.")]
     [SerializeField] private TouchHandGrabInteractor rightHandInteractor;
 
-    [Header("Results Popup (and Countdown)")]
-    [Tooltip("Assign the TextMeshProUGUI element (already in your scene) that will display the countdown messages and final results. Its parent should have an Image component for the background.")]
-    public TextMeshProUGUI resultsPopupText;
+    [Header("Instruction Dialog")]
+    [Tooltip("Assign the Dialog root GameObject (the one called 'Dialog').")]
+    [SerializeField] private GameObject dialogRoot;
+
+    [Tooltip("Assign the TextMeshProUGUI on Dialog/Dialog_Text/Title.")]
+    [SerializeField] private TextMeshProUGUI dialogText;
+
+    [Header("Menu Controller")]
+    [Tooltip("Assign the object that has your MenuModeController (or whatever script shows main menu).")]
+    [SerializeField] private MenuModeController menuController;
 
     [Header("Restart Settings")]
-    [Tooltip("Drag here the InteractableUnityEventWrapper from your BigRedButton/Button child so we can hook into OnSelectEntered.")]
+    [Tooltip("Optional: InteractableUnityEventWrapper from your BigRedButton so we can hook into OnSelectEntered.")]
     [SerializeField] private InteractableUnityEventWrapper restartButtonWrapper;
 
     [Header("Audio")]
-    public AudioSource audioPlayer;            // A single AudioSource somewhere in the scene
-    public List<AudioClip> objectClips;      // or AudioClip[] if you prefer
+    public AudioSource audioPlayer;
+    public List<AudioClip> objectClips;
 
+    [Header("CSV Output")]
     [SerializeField] private string outputFileName = "results.csv";
     private string CsvPath => Path.Combine(Application.persistentDataPath, outputFileName);
 
+    private bool _initialized = false;
     private bool _resultsSaved = false;
 
-    // Store the original background size.
-    private Vector2 originalBgSize;
-
-    // Cycle counter and storage.
     private int currentCycle = 0;
     private List<CycleData> cycleDataList = new List<CycleData>();
-
-    // Runtime array of target objects.
     private GameObject[] targetObjects;
 
-    // Structure to hold per-cycle metrics.
     private class CycleData {
         public string objectName;
         public float timeToGrab;
@@ -70,106 +78,155 @@ public class OVRHandCountdownCycle : MonoBehaviour {
         public float distanceAt30;
     }
 
+    // --------- cache original object poses PER PARENT ----------
+    private struct ObjSnapshot {
+        public Vector3 pos;
+        public Quaternion rot;
+        public bool active;
+    }
+
+    private readonly Dictionary<Transform, Dictionary<GameObject, ObjSnapshot>> _originalByParent =
+        new Dictionary<Transform, Dictionary<GameObject, ObjSnapshot>>();
+
+    private void CacheOriginalIfNeeded(Transform parent) {
+        if (parent == null) return;
+        if (_originalByParent.ContainsKey(parent)) return;
+
+        var dict = new Dictionary<GameObject, ObjSnapshot>();
+        foreach (Transform t in parent) {
+            dict[t.gameObject] = new ObjSnapshot
+            {
+                pos = t.position,
+                rot = t.rotation,
+                active = t.gameObject.activeSelf
+            };
+        }
+        _originalByParent[parent] = dict;
+    }
+
+    private void RestoreObjectsToOriginalPlacement(Transform parent) {
+        if (parent == null) return;
+        if (!_originalByParent.TryGetValue(parent, out var dict)) return;
+
+        foreach (var kv in dict) {
+            var go = kv.Key;
+            if (go == null) continue;
+
+            var s = kv.Value;
+            go.transform.position = s.pos;
+            go.transform.rotation = s.rot;
+            go.SetActive(s.active);
+
+            var rb = go.GetComponent<Rigidbody>();
+            if (rb != null) {
+                rb.velocity = Vector3.zero;
+                rb.angularVelocity = Vector3.zero;
+            }
+        }
+    }
+    // -----------------------------------------------------------
+
     private void Start() {
-        if (objectsParent == null) {
-            Debug.LogError("Please assign the Objects parent in the Inspector!");
+        HideDialog();
+        InitializeIfNeeded();
+    }
+
+    public void InitializeIfNeeded() {
+        if (_initialized) return;
+
+        if (handSkeleton == null) handSkeleton = GetComponent<OVRSkeleton>();
+        if (hand == null) hand = GetComponent<OVRHand>();
+
+        if (restartButtonWrapper != null)
+            restartButtonWrapper.WhenSelect.AddListener(RestartScene);
+
+        _initialized = true;
+    }
+
+    // Call this from buttons:
+    // StartExperiment(1) -> uses Objects
+    // StartExperiment(2) -> uses Objects2
+    public void StartExperiment(int whichObjects) {
+        // choose objects parent
+        if (whichObjects == 1) {
+            objectsParent = objects1Parent;
+            objects2Parent.gameObject.SetActive(false);
+        }
+        else if (whichObjects == 2) { 
+            objectsParent = objects2Parent;
+            objects1Parent.gameObject.SetActive(false);
+        }
+        else {
+            Debug.LogError("[OVRHandCountdownCycle] StartExperiment(which) must be 1 or 2.");
             return;
         }
+        
+
+        if (objectsParent == null) {
+            Debug.LogError("[OVRHandCountdownCycle] Chosen objects parent is not assigned in inspector!");
+            return;
+        }
+
+        if (rightHandInteractor == null) {
+            Debug.LogError("[OVRHandCountdownCycle] RightHandInteractor is not assigned!");
+            return;
+        }
+
+        if (dialogRoot == null || dialogText == null) {
+            Debug.LogError("[OVRHandCountdownCycle] DialogRoot / DialogText not assigned!");
+            return;
+        }
+
+        // cache originals for this set (once)
+        CacheOriginalIfNeeded(objectsParent);
+
+        if (!objectsParent.gameObject.activeSelf)
+            objectsParent.gameObject.SetActive(true);
 
         HideRealObjects();
 
         targetObjects = objectsParent
             .Cast<Transform>()
             .Where(t => t.name != "Plane" && t.name != "BottlePlane")
-            .OrderBy(_ => Random.value)        // Random.value is [0..1)
+            .OrderBy(_ => Random.value)
             .Select(t => t.gameObject)
             .ToArray();
 
-        if (handSkeleton == null) handSkeleton = GetComponent<OVRSkeleton>();
-        if (hand == null) hand = GetComponent<OVRHand>();
-
-        if (resultsPopupText == null) {
-            Debug.LogWarning("Results Popup Text is not assigned in the Inspector!");
-        }
-        else {
-            RectTransform textRect = resultsPopupText.GetComponent<RectTransform>();
-            textRect.anchorMin = new Vector2(0.5f, 0.5f);
-            textRect.anchorMax = new Vector2(0.5f, 0.5f);
-            textRect.anchoredPosition = Vector2.zero;
-
-            Image bg = resultsPopupText.GetComponentInParent<Image>();
-            if (bg != null) {
-                RectTransform bgRect = bg.GetComponent<RectTransform>();
-                originalBgSize = bgRect.sizeDelta;
-            }
-        }
-
-        if (restartButtonWrapper != null) {
-            restartButtonWrapper.WhenSelect.AddListener(RestartScene);
-        }
-        else {
-            Debug.LogWarning("RestartButtonWrapper not assigned; scene restart won't work.");
-        }
+        currentCycle = 0;
+        cycleDataList.Clear();
+        _resultsSaved = false;
 
         StartCoroutine(CycleCoroutine());
     }
 
-    private AudioClip GetClipForObject(string objectName) {
-        // Example: objectName = "Bottle"
-        // Clip name should be "Bottle"
-        foreach (var clip in objectClips) {
-            if (clip != null && clip.name == objectName)
-                return clip;
-        }
-        return null;
+    // ---------------- Dialog helpers ----------------
+    private void ShowDialog(string message) {
+        if (dialogRoot != null) dialogRoot.SetActive(true);
+        if (dialogText != null) dialogText.text = message;
     }
 
-    public void HideRealObjects() {
-        if (objectsParent == null) {
-            Debug.LogWarning("SetupSceneController: objectsParent is not assigned!");
-            return;
-        }
-
-        foreach (Transform child in objectsParent) {
-            if (child.name.Contains("Real")) {
-                // Disable ALL MeshRenderers under this object
-                MeshRenderer[] renderers = child.GetComponentsInChildren<MeshRenderer>(true);
-                foreach (var r in renderers) {
-                    r.enabled = false;
-                }
-            }
-        }
+    private void HideDialog() {
+        if (dialogText != null) dialogText.text = "";
+        if (dialogRoot != null) dialogRoot.SetActive(false);
     }
 
+    // ---------------- Experiment loop ----------------
     private IEnumerator CycleCoroutine() {
         while (currentCycle < targetObjects.Length) {
             var currentObject = targetObjects[currentCycle];
             var cycleData = new CycleData { objectName = currentObject.name };
 
-            // Countdown
-            float originalFontSize = resultsPopupText.fontSize;
-            resultsPopupText.fontSize = originalFontSize * 3f;
-            SetPopupBackgroundColor(new Color(0f, 0f, 0f, 0.7f));
+            ShowDialog($"Pick up the {currentObject.name}!");
 
-            resultsPopupText.text = $"Pick up the {currentObject.name}!";
-
-            // Get audio clip that matches the object name
             AudioClip clip = GetClipForObject(currentObject.name);
-
             if (clip != null && audioPlayer != null) {
                 audioPlayer.clip = clip;
                 audioPlayer.Play();
             }
 
-            UpdateCountdownBackgroundSize();
             yield return new WaitForSeconds(2.5f);
+            HideDialog();
 
-            resultsPopupText.text = "";
-            SetPopupBackgroundColor(new Color(0f, 0f, 0f, 0f));
-            resultsPopupText.fontSize = originalFontSize;
-            RestorePopupBackgroundSize();
-
-            // Initial metrics
             float initialDistMeters;
             cycleData.initialOpenness = ComputePalmOpenness(out initialDistMeters);
 
@@ -180,37 +237,27 @@ public class OVRHandCountdownCycle : MonoBehaviour {
 
             float startTime = Time.time;
             float maxOpenness = cycleData.initialOpenness;
-            float maxOpennessDistance = initialDistMeters; // start with initial distance
+            float maxOpennessDistance = initialDistMeters;
             bool recorded30 = false;
 
             while (rightHandInteractor.State != InteractorState.Select) {
                 float currentDistMeters;
                 float openness = ComputePalmOpenness(out currentDistMeters);
 
-                // track max openness % and distance
-                if (openness > maxOpenness) {
-                    maxOpenness = openness;
-                }
-                if (currentDistMeters > maxOpennessDistance) {
-                    maxOpennessDistance = currentDistMeters;
-                }
+                if (openness > maxOpenness) maxOpenness = openness;
+                if (currentDistMeters > maxOpennessDistance) maxOpennessDistance = currentDistMeters;
 
                 if (!recorded30 && openness >= 30f && wrist != null) {
                     cycleData.distanceAt30 = Vector3.Distance(wrist.position, currentObject.transform.position);
                     recorded30 = true;
                 }
+
                 yield return null;
             }
 
             cycleData.timeToGrab = Time.time - startTime;
             cycleData.maxOpenness = maxOpenness;
             cycleData.maxOpennessDistance = maxOpennessDistance;
-
-            Debug.Log(
-                $"[{currentObject.name}] Distance start: {cycleData.initialDistance:F2}m, " +
-                $"at30%: {cycleData.distanceAt30:F2}m, time: {cycleData.timeToGrab:F2}s, " +
-                $"maxOpen: {cycleData.maxOpenness:F1}%, " +
-                $"maxOpenDist: {cycleData.maxOpennessDistance:F3}m");
 
             float timer = 0f;
             while (rightHandInteractor.State == InteractorState.Select && timer < 2f) {
@@ -220,44 +267,83 @@ public class OVRHandCountdownCycle : MonoBehaviour {
 
             cycleDataList.Add(cycleData);
             currentCycle++;
+
             yield return new WaitForSeconds(1f);
         }
 
-        foreach (var obj in targetObjects) if (obj != null) obj.SetActive(false);
+        // keep your behavior: show results + write csv
+        ShowResultsPopup();
+
+        // then reset ONLY the set we used this run
+        RestoreObjectsToOriginalPlacement(objectsParent);
+
+        // hide for next run
+        if (objectsParent != null) objectsParent.gameObject.SetActive(false);
         if (table != null) table.SetActive(false);
 
-        SetPopupBackgroundColor(new Color(0f, 0f, 0f, 0.7f));
-        ShowResultsPopup();
-    }
+        HideDialog();
 
-    private void UpdateCountdownBackgroundSize() {
-        Image bg = resultsPopupText.GetComponentInParent<Image>();
-        if (bg != null) {
-            RectTransform bgRect = bg.GetComponent<RectTransform>();
-            bgRect.sizeDelta = new Vector2(7f, 3f);
-            Vector2 textCenter = resultsPopupText.textBounds.center;
-            bgRect.anchoredPosition = new Vector2(bgRect.anchoredPosition.x, textCenter.y + 2f);
+        if (menuController != null) {
+            menuController.EnterMainMenu();
+        }
+        else {
+            Debug.LogWarning("[OVRHandCountdownCycle] MenuController not assigned. Can't show main menu.");
         }
     }
 
-    private void RestorePopupBackgroundSize() {
-        Image bg = resultsPopupText.GetComponentInParent<Image>();
-        if (bg != null) {
-            RectTransform bgRect = bg.GetComponent<RectTransform>();
-            bgRect.sizeDelta = originalBgSize;
+    private void ShowResultsPopup() {
+        if (dialogRoot == null || dialogText == null) {
+            Debug.LogWarning("[OVRHandCountdownCycle] DialogRoot/DialogText missing; can't show results.");
+            return;
+        }
+
+        List<string> lines = new List<string>();
+        foreach (CycleData data in cycleDataList) {
+            string line =
+                $"{data.objectName}:\n" +
+                $"Total Time(s): {data.timeToGrab:F2}\n" +
+                $"Max Openness(%): {data.maxOpenness:F1}\n" +
+                $"Max Open Dist(m): {data.maxOpennessDistance:F3}\n" +
+                $"Initial Distance(m): {data.initialDistance:F2}\n" +
+                $"Distance Palm Opened(m): {data.distanceAt30:F2}";
+            lines.Add(line);
+        }
+
+        string finalText = string.Join("\n\n", lines);
+        dialogRoot.SetActive(true);
+        dialogText.text = finalText;
+
+        WriteCsvAll();
+        _resultsSaved = true;
+    }
+
+    // ---------------- Object filtering ----------------
+    public void HideRealObjects() {
+        if (objectsParent == null) {
+            Debug.LogWarning("[OVRHandCountdownCycle] objectsParent is not assigned!");
+            return;
+        }
+
+        foreach (Transform child in objectsParent) {
+            if (child.name.Contains("Real")) {
+                MeshRenderer[] renderers = child.GetComponentsInChildren<MeshRenderer>(true);
+                foreach (var r in renderers) r.enabled = false;
+            }
         }
     }
 
-    private void SetPopupBackgroundColor(Color color) {
-        Image bg = resultsPopupText.GetComponentInParent<Image>();
-        if (bg != null) {
-            bg.color = color;
+    // ---------------- Audio ----------------
+    private AudioClip GetClipForObject(string objectName) {
+        if (objectClips == null) return null;
+
+        foreach (var clip in objectClips) {
+            if (clip != null && clip.name == objectName)
+                return clip;
         }
+        return null;
     }
 
-    /// <summary>
-    /// Computes palm openness (% 0-100) AND returns the raw thumb-index distance in meters.
-    /// </summary>
+    // ---------------- Palm openness ----------------
     private float ComputePalmOpenness(out float distanceMeters) {
         distanceMeters = 0f;
 
@@ -266,72 +352,42 @@ public class OVRHandCountdownCycle : MonoBehaviour {
 
         Transform indexTip = null;
         Transform thumbTip = null;
+
         foreach (var bone in handSkeleton.Bones) {
             if (bone.Id == OVRSkeleton.BoneId.Hand_IndexTip || bone.Id == OVRSkeleton.BoneId.Hand_Index3)
                 indexTip = bone.Transform;
             else if (bone.Id == OVRSkeleton.BoneId.Hand_ThumbTip || bone.Id == OVRSkeleton.BoneId.Hand_Thumb3)
                 thumbTip = bone.Transform;
         }
+
         if (indexTip == null || thumbTip == null)
             return 0f;
 
         float distance = Vector3.Distance(indexTip.position, thumbTip.position);
         distanceMeters = distance;
 
-        float minDistance = 0.02f;
-        float maxDistance = 0.15f;
-        float openness01 = Mathf.Clamp01((distance - minDistance) / (maxDistance - minDistance));
-        float palmOpennessPercent = openness01 * 100f;
+        float minDistance = closedThreshold;
+        float maxDistance = openThreshold;
 
-        Debug.Log($"Palm Openness (Index/Thumb): {palmOpennessPercent:F2}% | Dist: {distanceMeters:F3}m");
-        return palmOpennessPercent;
+        float openness01 = Mathf.Clamp01((distance - minDistance) / (maxDistance - minDistance));
+        return openness01 * 100f;
     }
 
     private Transform GetWristTransform() {
         if (handSkeleton == null || handSkeleton.Bones == null)
             return null;
+
         foreach (var bone in handSkeleton.Bones) {
             if (bone.Id == OVRSkeleton.BoneId.Hand_WristRoot)
                 return bone.Transform;
         }
+
         return null;
     }
 
-    private void UpdateResultsPopupBackgroundSize() {
-        Image bg = resultsPopupText.GetComponentInParent<Image>();
-        if (bg != null) {
-            RectTransform bgRect = bg.GetComponent<RectTransform>();
-            bgRect.sizeDelta = new Vector2(12f, 10f);
-        }
-    }
-
-    private void ShowResultsPopup() {
-        if (resultsPopupText == null) {
-            Debug.LogWarning("Results Popup Text is not assigned in the Inspector!");
-            return;
-        }
-        List<string> lines = new List<string>();
-        foreach (CycleData data in cycleDataList) {
-            string line =
-                $"<color=#FF69B4>{data.objectName}</color>:\n" +
-                $"Total Time(s): <color=orange>{data.timeToGrab:F2}</color>, " +
-                $"Max Openness(%): <color=orange>{data.maxOpenness:F1}</color>, " +
-                $"Max Open Dist(m): <color=orange>{data.maxOpennessDistance:F3}</color>, " +
-                $"Initial Distance(m): <color=orange>{data.initialDistance:F2}</color>, " +
-                $"Distance Palm Opened(m): <color=orange>{data.distanceAt30:F2}</color>";
-            lines.Add(line);
-        }
-        string finalText = string.Join("\n\n", lines);
-        resultsPopupText.text = finalText;
-        UpdateResultsPopupBackgroundSize();
-
-        WriteCsvAll();
-        _resultsSaved = true;
-    }
-
+    // ---------------- Restart / CSV ----------------
     private void RestartScene() {
         if (!_resultsSaved) {
-            // pad out zero-entries for any untested objects
             for (int i = currentCycle; i < targetObjects.Length; i++) {
                 cycleDataList.Add(new CycleData
                 {
@@ -350,30 +406,6 @@ public class OVRHandCountdownCycle : MonoBehaviour {
         }
 
         SceneManager.LoadScene(SceneManager.GetActiveScene().buildIndex);
-        foreach (var obj in targetObjects) if (obj != null && !obj.activeSelf) obj.SetActive(true);
-    }
-
-    private void AppendCsvLine(CycleData d) {
-        bool isNew = !File.Exists(CsvPath);
-
-        using (var sw = new StreamWriter(CsvPath, append: true)) {
-            if (isNew) {
-                sw.WriteLine(
-                    "ExperimentID,ObjectName,TotalTime_s,MaxOpenness_pct,MaxOpennessDist_m,InitialDistance_m,DistancePalmOpened_m"
-                );
-            }
-            string experimentId = System.DateTime.Now.ToString("yyyy-MM-dd_HH-mm-ss");
-            sw.WriteLine(
-                $"{experimentId}," +
-                $"{d.objectName}," +
-                $"{d.timeToGrab:F2}," +
-                $"{d.maxOpenness:F1}," +
-                $"{d.maxOpennessDistance:F3}," +
-                $"{d.initialDistance:F2}," +
-                $"{d.distanceAt30:F2}");
-        }
-
-        Debug.Log($"[CSV] Appended {d.objectName} to {CsvPath}");
     }
 
     private void WriteCsvAll() {
@@ -382,9 +414,7 @@ public class OVRHandCountdownCycle : MonoBehaviour {
 
         using (var sw = new StreamWriter(path, append: true)) {
             if (isNew) {
-                sw.WriteLine(
-                    "ExperimentID,ObjectName,TotalTime_s,MaxOpenness_pct,MaxOpennessDist_m,InitialDistance_m,DistancePalmOpened_m"
-                );
+                sw.WriteLine("ExperimentID,ObjectName,TotalTime_s,MaxOpenness_pct,MaxOpennessDist_m,InitialDistance_m,DistancePalmOpened_m");
             }
 
             string experimentId = System.DateTime.Now.ToString("yyyy-MM-dd_HH-mm-ss");
@@ -396,10 +426,11 @@ public class OVRHandCountdownCycle : MonoBehaviour {
                     $"{d.maxOpenness:F1}," +
                     $"{d.maxOpennessDistance:F3}," +
                     $"{d.initialDistance:F2}," +
-                    $"{d.distanceAt30:F2}");
+                    $"{d.distanceAt30:F2}"
+                );
             }
         }
 
-        Debug.Log($"[CSV] Wrote full test ({cycleDataList.Count} rows) to {path}");
+        Debug.Log($"[CSV] Wrote ({cycleDataList.Count} rows) to {path}");
     }
 }

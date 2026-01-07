@@ -8,6 +8,7 @@ public class MenuController : MonoBehaviour {
     public string setupSceneName = "SetupScene";
     public string setupSceneName2 = "SetupScene2";
     public string mainMenuSceneName = "MainMenuScene";
+    public string setupSceneTestName = "setupSceneTest";
 
     // Called by StartButton
     public void StartMainScene() {
@@ -32,6 +33,11 @@ public class MenuController : MonoBehaviour {
     // Called by MainMenuButton
     public void MainMenuScene() {
         SceneManager.LoadScene(mainMenuSceneName);
+    }
+
+    // Called by SetupTestButton
+    public void SetupTestScene() {
+        SceneManager.LoadScene(setupSceneTestName);
     }
 
     // Called by ExitButton
