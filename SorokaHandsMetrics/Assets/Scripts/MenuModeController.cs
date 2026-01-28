@@ -151,10 +151,23 @@ public class MenuModeController : MonoBehaviour {
 
     // ----------------- Placement: Show/Hide object sets -----------------
 
+    private void ShowAllRealObjects(Transform root) {
+        if (!root) return;
+
+        foreach (Transform child in root) {
+            if (child.name.Contains("Real")) {
+                var renderers = child.GetComponentsInChildren<MeshRenderer>(true);
+                foreach (var r in renderers) r.enabled = true;
+            }
+        }
+    }
+
     private void ShowObjects1ForPlacement() {
         // show objects1, hide objects2
         ShowRoot(objects1Root, true);
         ShowRoot(objects2Root, false);
+
+        ShowAllRealObjects(objects1Root);
 
         // no gravity in settings mode
         ResetObjectsToOrigin(objects1Root);
@@ -165,6 +178,8 @@ public class MenuModeController : MonoBehaviour {
         // show objects2, hide objects1
         ShowRoot(objects2Root, true);
         ShowRoot(objects1Root, false);
+
+        ShowAllRealObjects(objects2Root);
 
         // no gravity in settings mode
         ResetObjectsToOrigin(objects2Root);
