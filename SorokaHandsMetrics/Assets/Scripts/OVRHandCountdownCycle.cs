@@ -7,6 +7,7 @@ using TMPro;
 using Oculus.Interaction;
 using Oculus.Interaction.HandGrab;
 using UnityEngine.SceneManagement;
+using System;
 
 public class OVRHandCountdownCycle : MonoBehaviour {
     [Header("Objects Sets (assign both)")]
@@ -19,7 +20,7 @@ public class OVRHandCountdownCycle : MonoBehaviour {
     public GameObject table;
 
     [Header("Hand Tracking Settings")]
-    [Tooltip("OVRSkeleton used to compute palm openness.")]
+    [Tooltip("OVRSkeleton used to compute palm openness and finger positions.")]
     public OVRSkeleton handSkeleton;
 
     [Tooltip("Optional OVRHand (used to check tracking status).")]
@@ -83,6 +84,27 @@ public class OVRHandCountdownCycle : MonoBehaviour {
     [SerializeField] private string outputFileName = "results.csv";
     private string CsvPath => Path.Combine(Application.persistentDataPath, outputFileName);
 
+    [Header("Trajectory Log Output (separate file)")]
+    [SerializeField] private string trajectoryFileName = "hand_trajectory.csv";
+    private string TrajectoryPath => Path.Combine(Application.persistentDataPath, trajectoryFileName);
+
+    [Tooltip("Log hand trajectory at most this many times per second (reduces file size).")]
+    [SerializeField] private float trajectoryLogHz = 30f;
+
+    [Header("Subject")]
+    [Tooltip("For now keep as 1; edit later per participant.")]
+    [SerializeField] private int subjectId = 1;
+
+    private float _trajectoryLogInterval => (trajectoryLogHz <= 0f) ? 0f : (1f / trajectoryLogHz);
+    private float _nextTrajectoryLogTime = 0f;
+
+    private StreamWriter _trajectoryWriter;
+
+    // IMPORTANT FIX:
+    // Buffer trajectory rows in memory and ONLY write them when the cycle is ACCEPTED
+    // (i.e., after Start Next Cycle was pressed). If Restart/Reset happens, we discard the buffer.
+    private readonly List<string> _pendingTrajectoryRows = new List<string>(4096);
+
     private bool _initialized = false;
     private bool _resultsSaved = false;
 
@@ -93,11 +115,13 @@ public class OVRHandCountdownCycle : MonoBehaviour {
     private bool _startNextCycleRequested = false;
     private bool _resetCycleRequested = false;
 
+    private string _experimentId = null;
+
     private class CycleData {
         public string objectName;
         public float timeToGrab;
         public float maxOpenness;           // %
-        public float maxOpennessDistance;   // meters
+        public float maxOpennessDistance;   // meters (distance between thumb/index tips at max openness)
         public float initialOpenness;
         public float initialDistance;
         public float distanceAt30;
@@ -151,6 +175,44 @@ public class OVRHandCountdownCycle : MonoBehaviour {
         }
     }
     // -----------------------------------------------------------
+
+    // --------- cached bones for fast access ----------
+    private Transform _wrist;
+    private Transform _thumbTip;
+    private Transform _indexTip;
+    private Transform _middleTip;
+    private Transform _ringTip;
+    private Transform _pinkyTip;
+
+    private bool _boneCacheReady = false;
+
+    private void EnsureBoneCache() {
+        if (_boneCacheReady) return;
+        if (handSkeleton == null || handSkeleton.Bones == null || handSkeleton.Bones.Count == 0) return;
+
+        _wrist = GetBoneTransform(OVRSkeleton.BoneId.Hand_WristRoot);
+        _thumbTip = GetBoneTransform(OVRSkeleton.BoneId.Hand_ThumbTip);
+        _indexTip = GetBoneTransform(OVRSkeleton.BoneId.Hand_IndexTip);
+        _middleTip = GetBoneTransform(OVRSkeleton.BoneId.Hand_MiddleTip);
+        _ringTip = GetBoneTransform(OVRSkeleton.BoneId.Hand_RingTip);
+        _pinkyTip = GetBoneTransform(OVRSkeleton.BoneId.Hand_PinkyTip);
+
+        // Fallbacks (some rigs use *_3)
+        if (_thumbTip == null) _thumbTip = GetBoneTransform(OVRSkeleton.BoneId.Hand_Thumb3);
+        if (_indexTip == null) _indexTip = GetBoneTransform(OVRSkeleton.BoneId.Hand_Index3);
+
+        // tips other than thumb/index are "nice to have", not required
+        _boneCacheReady = (_wrist != null && _thumbTip != null && _indexTip != null);
+    }
+
+    private Transform GetBoneTransform(OVRSkeleton.BoneId id) {
+        if (handSkeleton == null || handSkeleton.Bones == null) return null;
+        foreach (var bone in handSkeleton.Bones) {
+            if (bone.Id == id) return bone.Transform;
+        }
+        return null;
+    }
+    // ------------------------------------------------
 
     private void Start() {
         HideDialog();
@@ -252,13 +314,21 @@ public class OVRHandCountdownCycle : MonoBehaviour {
         targetObjects = objectsParent
             .Cast<Transform>()
             .Where(t => t.name != "Plane" && t.name != "BottlePlane")
-            .OrderBy(_ => Random.value)
+            .OrderBy(_ => UnityEngine.Random.value)
             .Select(t => t.gameObject)
             .ToArray();
 
         currentCycle = 0;
         cycleDataList.Clear();
         _resultsSaved = false;
+
+        // Create a stable experiment ID for BOTH logs
+        _experimentId = DateTime.Now.ToString("yyyy-MM-dd_HH-mm-ss");
+
+        // Clear any pending buffered trajectory from a previous run
+        _pendingTrajectoryRows.Clear();
+
+        OpenTrajectoryLogIfNeeded();
 
         StartCoroutine(CycleCoroutine());
     }
@@ -276,6 +346,9 @@ public class OVRHandCountdownCycle : MonoBehaviour {
 
     private IEnumerator ResetCurrentCycle(GameObject currentObject) {
         StopAudio();
+
+        // DISCARD buffered trajectory for this attempt
+        _pendingTrajectoryRows.Clear();
 
         if (rightHandInteractor != null && rightHandInteractor.State == InteractorState.Select) {
             yield return ForceUnselectWithFramesIfNeeded();
@@ -301,6 +374,10 @@ public class OVRHandCountdownCycle : MonoBehaviour {
             // Allow multiple attempts for same cycle index (Reset Cycle)
             while (true) {
                 _startNextCycleRequested = false;
+
+                // start attempt with empty buffer
+                _pendingTrajectoryRows.Clear();
+
                 var cycleData = new CycleData { objectName = currentObject.name };
 
                 // A) return-to-start prompt + audio
@@ -330,13 +407,14 @@ public class OVRHandCountdownCycle : MonoBehaviour {
                 }
                 HideDialog();
 
+                EnsureBoneCache();
+
                 // initial openness/distance
                 float initialDistMeters;
                 cycleData.initialOpenness = ComputePalmOpenness(out initialDistMeters);
 
-                var wrist = GetWristTransform();
-                cycleData.initialDistance = wrist != null
-                    ? Vector3.Distance(wrist.position, currentObject.transform.position)
+                cycleData.initialDistance = (_wrist != null)
+                    ? Vector3.Distance(_wrist.position, currentObject.transform.position)
                     : 0f;
 
                 float startTime = Time.time;
@@ -344,7 +422,10 @@ public class OVRHandCountdownCycle : MonoBehaviour {
                 float maxOpennessDistance = initialDistMeters;
                 bool recorded30 = false;
 
-                // C) wait until grab (track openness until grab)
+                // Trajectory sampling control for this cycle
+                _nextTrajectoryLogTime = 0f;
+
+                // C) wait until grab (track openness + trajectory until grab)
                 while (rightHandInteractor.State != InteractorState.Select) {
                     if (ConsumeResetRequest()) { yield return ResetCurrentCycle(currentObject); goto RestartAttempt; }
 
@@ -354,10 +435,18 @@ public class OVRHandCountdownCycle : MonoBehaviour {
                     if (openness > maxOpenness) maxOpenness = openness;
                     if (currentDistMeters > maxOpennessDistance) maxOpennessDistance = currentDistMeters;
 
-                    if (!recorded30 && openness >= 30f && wrist != null) {
-                        cycleData.distanceAt30 = Vector3.Distance(wrist.position, currentObject.transform.position);
+                    if (!recorded30 && openness >= 30f && _wrist != null) {
+                        cycleData.distanceAt30 = Vector3.Distance(_wrist.position, currentObject.transform.position);
                         recorded30 = true;
                     }
+
+                    // Buffer trajectory rows (not written yet!)
+                    LogTrajectorySampleIfDue(
+                        cycleIndex: currentCycle,
+                        objectName: currentObject.name,
+                        tSinceCycleStart: Time.time - startTime,
+                        opennessPct: openness
+                    );
 
                     yield return null;
                 }
@@ -388,7 +477,11 @@ public class OVRHandCountdownCycle : MonoBehaviour {
 
                 HideDialog();
 
-                // F) HARD RESET ON NEXT CYCLE PRESS: ungrab (if needed), wait, then restore ALL objects
+                // Cycle was ACCEPTED -> write buffered trajectory rows to file
+                FlushPendingTrajectoryToFile();
+                _pendingTrajectoryRows.Clear();
+
+                // F) HARD RESET ON NEXT CYCLE PRESS
                 if (forceUnselectIfStillGrabbedOnNext && rightHandInteractor.State == InteractorState.Select) {
                     yield return ForceUnselectWithFramesIfNeeded();
                 }
@@ -422,6 +515,8 @@ public class OVRHandCountdownCycle : MonoBehaviour {
         if (table != null) table.SetActive(false);
 
         HideDialog();
+
+        CloseTrajectoryLog();
 
         if (menuController != null) {
             menuController.EnterMainMenu();
@@ -493,20 +588,12 @@ public class OVRHandCountdownCycle : MonoBehaviour {
         if (handSkeleton == null || handSkeleton.Bones == null || handSkeleton.Bones.Count == 0)
             return 0f;
 
-        Transform indexTip = null;
-        Transform thumbTip = null;
+        EnsureBoneCache();
 
-        foreach (var bone in handSkeleton.Bones) {
-            if (bone.Id == OVRSkeleton.BoneId.Hand_IndexTip || bone.Id == OVRSkeleton.BoneId.Hand_Index3)
-                indexTip = bone.Transform;
-            else if (bone.Id == OVRSkeleton.BoneId.Hand_ThumbTip || bone.Id == OVRSkeleton.BoneId.Hand_Thumb3)
-                thumbTip = bone.Transform;
-        }
-
-        if (indexTip == null || thumbTip == null)
+        if (_indexTip == null || _thumbTip == null)
             return 0f;
 
-        float distance = Vector3.Distance(indexTip.position, thumbTip.position);
+        float distance = Vector3.Distance(_indexTip.position, _thumbTip.position);
         distanceMeters = distance;
 
         float minDistance = closedThreshold;
@@ -516,20 +603,101 @@ public class OVRHandCountdownCycle : MonoBehaviour {
         return openness01 * 100f;
     }
 
-    private Transform GetWristTransform() {
-        if (handSkeleton == null || handSkeleton.Bones == null)
-            return null;
+    // ---------------- Trajectory logging (BUFFERED) ----------------
+    private void OpenTrajectoryLogIfNeeded() {
+        try {
+            bool isNew = !File.Exists(TrajectoryPath);
+            _trajectoryWriter = new StreamWriter(TrajectoryPath, append: true);
 
-        foreach (var bone in handSkeleton.Bones) {
-            if (bone.Id == OVRSkeleton.BoneId.Hand_WristRoot)
-                return bone.Transform;
+            if (isNew) {
+                _trajectoryWriter.WriteLine(
+                    "Subject,ExperimentID,UnixTime_s,CycleIndex,ObjectName,tSinceCycleStart_s,Openness_pct," +
+                    "Wrist_x,Wrist_y,Wrist_z," +
+                    "ThumbTip_x,ThumbTip_y,ThumbTip_z," +
+                    "IndexTip_x,IndexTip_y,IndexTip_z," +
+                    "MiddleTip_x,MiddleTip_y,MiddleTip_z," +
+                    "RingTip_x,RingTip_y,RingTip_z," +
+                    "PinkyTip_x,PinkyTip_y,PinkyTip_z"
+                );
+                _trajectoryWriter.Flush();
+            }
+
+            Debug.Log($"[Trajectory] Logging to: {TrajectoryPath}");
+        }
+        catch (Exception e) {
+            Debug.LogError($"[Trajectory] Failed to open trajectory file: {e}");
+            _trajectoryWriter = null;
+        }
+    }
+
+    private void CloseTrajectoryLog() {
+        if (_trajectoryWriter == null) return;
+        try {
+            _trajectoryWriter.Flush();
+            _trajectoryWriter.Close();
+        }
+        catch { }
+        finally {
+            _trajectoryWriter = null;
+        }
+    }
+
+    private void LogTrajectorySampleIfDue(int cycleIndex, string objectName, float tSinceCycleStart, float opennessPct) {
+        if (_trajectoryWriter == null) return;
+
+        if (_trajectoryLogInterval > 0f) {
+            if (tSinceCycleStart < _nextTrajectoryLogTime) return;
+            _nextTrajectoryLogTime = tSinceCycleStart + _trajectoryLogInterval;
         }
 
-        return null;
+        EnsureBoneCache();
+        if (!_boneCacheReady) return;
+
+        double unixTime = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0;
+
+        Vector3 wrist = _wrist != null ? _wrist.position : Vector3.zero;
+        Vector3 thumb = _thumbTip != null ? _thumbTip.position : Vector3.zero;
+        Vector3 index = _indexTip != null ? _indexTip.position : Vector3.zero;
+        Vector3 middle = _middleTip != null ? _middleTip.position : Vector3.zero;
+        Vector3 ring = _ringTip != null ? _ringTip.position : Vector3.zero;
+        Vector3 pinky = _pinkyTip != null ? _pinkyTip.position : Vector3.zero;
+
+        // Buffer row in memory; do NOT write to disk yet.
+        string row =
+            $"{subjectId}," +
+            $"{_experimentId}," +
+            $"{unixTime:F3}," +
+            $"{cycleIndex}," +
+            $"{objectName}," +
+            $"{tSinceCycleStart:F4}," +
+            $"{opennessPct:F2}," +
+            $"{wrist.x:F6},{wrist.y:F6},{wrist.z:F6}," +
+            $"{thumb.x:F6},{thumb.y:F6},{thumb.z:F6}," +
+            $"{index.x:F6},{index.y:F6},{index.z:F6}," +
+            $"{middle.x:F6},{middle.y:F6},{middle.z:F6}," +
+            $"{ring.x:F6},{ring.y:F6},{ring.z:F6}," +
+            $"{pinky.x:F6},{pinky.y:F6},{pinky.z:F6}";
+
+        _pendingTrajectoryRows.Add(row);
+    }
+
+    // Only called when the cycle is ACCEPTED (Start Next Cycle pressed).
+    private void FlushPendingTrajectoryToFile() {
+        if (_trajectoryWriter == null) return;
+        if (_pendingTrajectoryRows.Count == 0) return;
+
+        for (int i = 0; i < _pendingTrajectoryRows.Count; i++) {
+            _trajectoryWriter.WriteLine(_pendingTrajectoryRows[i]);
+        }
+        _trajectoryWriter.Flush();
     }
 
     // ---------------- Restart / CSV ----------------
     private void RestartScene() {
+        // IMPORTANT FIX:
+        // If user hits Restart, we DISCARD any buffered trajectory rows (uncommitted attempt)
+        _pendingTrajectoryRows.Clear();
+
         if (!_resultsSaved) {
             for (int i = currentCycle; i < targetObjects.Length; i++) {
                 cycleDataList.Add(new CycleData
@@ -548,6 +716,7 @@ public class OVRHandCountdownCycle : MonoBehaviour {
             _resultsSaved = true;
         }
 
+        CloseTrajectoryLog();
         SceneManager.LoadScene(SceneManager.GetActiveScene().buildIndex);
     }
 
@@ -560,7 +729,10 @@ public class OVRHandCountdownCycle : MonoBehaviour {
                 sw.WriteLine("ExperimentID,ObjectName,TotalTime_s,MaxOpenness_pct,MaxOpennessDist_m,InitialDistance_m,DistancePalmOpened_m");
             }
 
-            string experimentId = System.DateTime.Now.ToString("yyyy-MM-dd_HH-mm-ss");
+            string experimentId = string.IsNullOrEmpty(_experimentId)
+                ? DateTime.Now.ToString("yyyy-MM-dd_HH-mm-ss")
+                : _experimentId;
+
             foreach (var d in cycleDataList) {
                 sw.WriteLine(
                     $"{experimentId}," +
