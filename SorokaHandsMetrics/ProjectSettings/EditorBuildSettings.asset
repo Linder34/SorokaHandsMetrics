@@ -6,26 +6,20 @@ EditorBuildSettings:
   serializedVersion: 2
   m_Scenes:
   - enabled: 0
-    path: Assets/Scenes/MainMenuScene.unity
-    guid: 0c2f3110cd37ebe43b8e75a5516bc953
-  - enabled: 0
-    path: Assets/Scenes/MainScene.unity
-    guid: 9fc0d4010bbf28b4594072e72b8655ab
-  - enabled: 0
-    path: Assets/Scenes/SetupScene.unity
-    guid: 0698ce7472b860546b5785f9505ccce6
-  - enabled: 0
     path: Assets/Scenes/MainSceneTest.unity
     guid: 9b071f3fb150aa946b03d433c0d02026
   - enabled: 0
     path: Assets/Scenes/SetupScene2.unity
     guid: bda6adceb0dd3794290542ed6525bdb8
-  - enabled: 1
+  - enabled: 0
     path: Assets/Scenes/SetupSceneTest.unity
     guid: 21f791210898b7447b74dc47c0132d8d
   - enabled: 0
     path: Assets/Scenes/MainScene2.unity
     guid: 76c933b65ef0c2846aded490e06af11b
+  - enabled: 1
+    path: Assets/Scenes/SorokaRehabScene.unity
+    guid: 3135038869e8349488046c9cc16c3101
   m_configObjects:
     com.unity.xr.management.loader_settings: {fileID: 11400000, guid: bc61e4a2a555f6d4eba2ca5638d4aed7, type: 2}
     com.unity.xr.openxr.settings4: {fileID: 11400000, guid: 379fab258caeb684e9c75441154e05dc, type: 2}
