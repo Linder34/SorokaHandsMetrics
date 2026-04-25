@@ -1,16 +1,19 @@
 ﻿using TMPro;
 using UnityEngine;
-using UnityEngine.SceneManagement;
 using UnityEngine.UI;
 
 public class Stage1SettingsUI : MonoBehaviour {
+
     [Header("Menu Controller")]
     [SerializeField] private RehabMenuController rehabMenuController;
 
     [Header("Stage 1 Runtime")]
     [SerializeField] private Stage1CycleController stage1CycleController;
     [SerializeField] private Transform stage1ObjectsParent;
+
+    [Header("Hand Skeletons")]
     [SerializeField] private OVRSkeleton rightHandSkeleton;
+    [SerializeField] private OVRSkeleton leftHandSkeleton;
 
     [Header("Current Config")]
     [SerializeField] private Stage1Config currentConfig = new Stage1Config();
@@ -71,6 +74,7 @@ public class Stage1SettingsUI : MonoBehaviour {
 
     public void OnEndlessModeChanged(bool isOn) {
         currentConfig.endlessMode = isOn;
+        RefreshValueLabels();
     }
 
     public void OnTrialsAmountChanged(float value) {
@@ -127,8 +131,10 @@ public class Stage1SettingsUI : MonoBehaviour {
     public void StartStage1() {
         currentConfig.ClampValues();
 
+        OVRSkeleton selectedSkeleton = GetSelectedHandSkeleton();
+
         if (stage1CycleController != null) {
-            stage1CycleController.BeginStage(currentConfig, stage1ObjectsParent, rightHandSkeleton);
+            stage1CycleController.BeginStage(currentConfig, stage1ObjectsParent, selectedSkeleton);
         }
         else {
             FileLogger.Log("Stage1CycleController NOT assigned!");
@@ -139,6 +145,23 @@ public class Stage1SettingsUI : MonoBehaviour {
         }
     }
 
+    private OVRSkeleton GetSelectedHandSkeleton() {
+        switch (currentConfig.handSelection) {
+            case HandSelection.Right:
+                return rightHandSkeleton;
+
+            case HandSelection.Left:
+                return leftHandSkeleton;
+
+            case HandSelection.Both:
+                FileLogger.Log("Both hands selected (not supported yet), defaulting to Right.");
+                return rightHandSkeleton;
+
+            default:
+                return rightHandSkeleton;
+        }
+    }
+
     #endregion
 
     #region Defaults
@@ -146,10 +169,10 @@ public class Stage1SettingsUI : MonoBehaviour {
     public void SetDefaults() {
         currentConfig.handSelection = HandSelection.Right;
         currentConfig.endlessMode = false;
-        currentConfig.trialsAmount = 3;
+        currentConfig.trialsAmount = 10;
 
-        currentConfig.useTimeLimit = true;
-        currentConfig.timeLimitSeconds = 2;
+        currentConfig.useTimeLimit = false;
+        currentConfig.timeLimitSeconds = 3;
 
         currentConfig.targetDistance = TargetDistance.Near;
         currentConfig.targetSize = TargetSize.Small;

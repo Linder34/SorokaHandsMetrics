@@ -2,65 +2,106 @@ using System.Collections.Generic;
 using UnityEngine;
 
 public class Stage1TouchDisappear : MonoBehaviour {
+    [Header("Touch Detection")]
+    [SerializeField] private float touchThresholdMeters = 0.015f;
+
     private OVRSkeleton skeleton;
     private Stage1CycleController controller;
-    private Collider col;
+    private Collider targetCollider;
 
-    private List<Transform> tips = new List<Transform>();
+    private readonly List<Transform> fingertipBones = new List<Transform>();
+    private bool initialized = false;
 
-    private const float threshold = 0.015f;
+    public void Initialize(OVRSkeleton handSkeleton, Stage1CycleController cycleController) {
+        skeleton = handSkeleton;
+        controller = cycleController;
+        targetCollider = GetComponent<Collider>();
 
-    public void Initialize(OVRSkeleton skel, Stage1CycleController ctrl) {
-        skeleton = skel;
-        controller = ctrl;
-        col = GetComponent<Collider>();
+        fingertipBones.Clear();
+        initialized = false;
 
-        CacheTips();
+        if (skeleton == null) {
+            FileLogger.Log($"Stage1TouchDisappear: skeleton is null for {gameObject.name}");
+            return;
+        }
+
+        if (controller == null) {
+            FileLogger.Log($"Stage1TouchDisappear: controller is null for {gameObject.name}");
+            return;
+        }
+
+        if (targetCollider == null) {
+            FileLogger.Log($"Stage1TouchDisappear: {gameObject.name} has no collider.");
+            return;
+        }
+
+        CacheFingertips();
+
+        if (fingertipBones.Count == 0) {
+            FileLogger.Log($"Stage1TouchDisappear: no fingertip bones found for {gameObject.name}");
+            return;
+        }
+
+        initialized = true;
+        FileLogger.Log($"Stage1TouchDisappear initialized for {gameObject.name}, fingertips={fingertipBones.Count}");
     }
 
     private void Update() {
-        if (skeleton == null || controller == null || col == null)
+        if (!initialized)
             return;
 
         if (!gameObject.activeInHierarchy)
             return;
 
-        foreach (var tip in tips) {
+        bool isTouching = IsAnyFingertipTouching();
+        controller.SetCurrentObjectTouchState(gameObject, isTouching);
+    }
+
+    private bool IsAnyFingertipTouching() {
+        for (int i = 0; i < fingertipBones.Count; i++) {
+            Transform tip = fingertipBones[i];
             if (tip == null) continue;
 
-            float d = Vector3.Distance(tip.position, col.ClosestPoint(tip.position));
+            Vector3 tipPosition = tip.position;
+            Vector3 closestPoint = targetCollider.ClosestPoint(tipPosition);
+            float distance = Vector3.Distance(tipPosition, closestPoint);
 
-            if (d < threshold) {
-                controller.OnObjectTouched(gameObject);
-                return;
-            }
+            if (distance <= touchThresholdMeters)
+                return true;
         }
+
+        return false;
     }
 
-    private void CacheTips() {
-        if (skeleton == null || skeleton.Bones == null) return;
+    private void CacheFingertips() {
+        if (skeleton == null || skeleton.Bones == null)
+            return;
 
-        AddTip(OVRSkeleton.BoneId.Hand_IndexTip, OVRSkeleton.BoneId.Hand_Index3);
-        AddTip(OVRSkeleton.BoneId.Hand_ThumbTip, OVRSkeleton.BoneId.Hand_Thumb3);
-        AddTip(OVRSkeleton.BoneId.Hand_MiddleTip, OVRSkeleton.BoneId.Max);
-        AddTip(OVRSkeleton.BoneId.Hand_RingTip, OVRSkeleton.BoneId.Max);
-        AddTip(OVRSkeleton.BoneId.Hand_PinkyTip, OVRSkeleton.BoneId.Max);
+        AddBoneIfExists(OVRSkeleton.BoneId.Hand_ThumbTip, OVRSkeleton.BoneId.Hand_Thumb3);
+        AddBoneIfExists(OVRSkeleton.BoneId.Hand_IndexTip, OVRSkeleton.BoneId.Hand_Index3);
+        AddBoneIfExists(OVRSkeleton.BoneId.Hand_MiddleTip, OVRSkeleton.BoneId.Max);
+        AddBoneIfExists(OVRSkeleton.BoneId.Hand_RingTip, OVRSkeleton.BoneId.Max);
+        AddBoneIfExists(OVRSkeleton.BoneId.Hand_PinkyTip, OVRSkeleton.BoneId.Max);
     }
 
-    private void AddTip(OVRSkeleton.BoneId primary, OVRSkeleton.BoneId fallback) {
-        Transform t = GetBone(primary);
+    private void AddBoneIfExists(OVRSkeleton.BoneId primary, OVRSkeleton.BoneId fallback) {
+        Transform bone = GetBone(primary);
 
-        if (t == null && fallback != OVRSkeleton.BoneId.Max)
-            t = GetBone(fallback);
+        if (bone == null && fallback != OVRSkeleton.BoneId.Max)
+            bone = GetBone(fallback);
 
-        if (t != null)
-            tips.Add(t);
+        if (bone != null)
+            fingertipBones.Add(bone);
     }
 
     private Transform GetBone(OVRSkeleton.BoneId id) {
-        foreach (var b in skeleton.Bones)
-            if (b.Id == id)
-                return b.Transform;
+        if (skeleton == null || skeleton.Bones == null)
+            return null;
+
+        foreach (var bone in skeleton.Bones) {
+            if (bone.Id == id)
+                return bone.Transform;
+        }
 
         return null;
     }

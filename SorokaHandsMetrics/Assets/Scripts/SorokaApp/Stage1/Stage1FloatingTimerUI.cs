@@ -9,20 +9,16 @@ public class Stage1FloatingTimerUI : MonoBehaviour {
     [SerializeField] private Color normalColor = Color.white;
     [SerializeField] private Color expiredColor = Color.red;
 
-    private bool isVisible = false;
-
     public void SetFollowTarget(Transform target) {
-        // Intentionally left empty now.
-        // We no longer follow the camera.
+        // Intentionally empty.
+        // Timer stays where it is placed in the scene.
     }
 
     public void Show() {
-        isVisible = true;
         gameObject.SetActive(true);
     }
 
     public void Hide() {
-        isVisible = false;
         gameObject.SetActive(false);
     }
 

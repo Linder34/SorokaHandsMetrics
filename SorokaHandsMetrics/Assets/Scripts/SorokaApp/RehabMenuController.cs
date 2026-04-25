@@ -30,4 +30,12 @@ public class RehabMenuController : MonoBehaviour {
         if (stage1SettingsRoot != null)
             stage1SettingsRoot.SetActive(false);
     }
+
+    public void EnterStage1Settings() {
+        if (mainMenuRoot != null)
+            mainMenuRoot.SetActive(false);
+
+        if (stage1SettingsRoot != null)
+            stage1SettingsRoot.SetActive(true);
+    }
 }
