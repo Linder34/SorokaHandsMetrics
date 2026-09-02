@@ -1,4 +1,4 @@
-using System.Collections;
+﻿using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
@@ -7,6 +7,7 @@ public class Stage1CycleController : MonoBehaviour {
     [Header("UI / Flow")]
     [SerializeField] private Stage1FloatingTimerUI timerUI;
     [SerializeField] private RehabMenuController rehabMenuController;
+    [SerializeField] private Stage1ScoreUI scoreUI;
 
     [Header("Data Logging")]
     [SerializeField] private Stage1HandDataLogger dataLogger;
@@ -36,6 +37,8 @@ public class Stage1CycleController : MonoBehaviour {
     [SerializeField] private float mediumScaleMultiplier = 1f;
     [SerializeField] private float largeScaleMultiplier = 1.2f;
 
+    [SerializeField] private GameObject backToMenuButton;
+
     private Stage1Config config;
     private Transform objectsParent;
     private OVRSkeleton handSkeleton;
@@ -46,6 +49,8 @@ public class Stage1CycleController : MonoBehaviour {
 
     private GameObject currentObject;
     private int cyclesCompleted;
+    private int score;
+
     private bool running;
     private bool waitingForTouch;
 
@@ -58,6 +63,14 @@ public class Stage1CycleController : MonoBehaviour {
 
     private Coroutine cycleCoroutine;
 
+    private void Awake() {
+        if (scoreUI != null)
+            scoreUI.gameObject.SetActive(false);
+
+        if (backToMenuButton != null)
+            backToMenuButton.SetActive(false);
+    }
+
     public void BeginStage(Stage1Config cfg, Transform parent, OVRSkeleton skeleton) {
         config = cfg;
         objectsParent = parent;
@@ -66,6 +79,9 @@ public class Stage1CycleController : MonoBehaviour {
         FileLogger.Log(
             $"BeginStage called | hand={config.handSelection}, useTimeLimit={config.useTimeLimit}, timeLimitSeconds={config.timeLimitSeconds}, trials={config.trialsAmount}, endless={config.endlessMode}, touchMode={config.touchMode}, holdDuration={config.holdDurationSeconds}"
         );
+
+        if (scoreUI != null)
+            scoreUI.gameObject.SetActive(true);
 
         if (objectsParent == null) {
             FileLogger.Log("Stage1CycleController: objectsParent is null.");
@@ -85,7 +101,7 @@ public class Stage1CycleController : MonoBehaviour {
         objectsParent.gameObject.SetActive(true);
 
         allObjects = objectsParent.Cast<Transform>().Select(t => t.gameObject).ToList();
-        originalLocalScales.Clear();
+        //originalLocalScales.Clear();
 
         foreach (var obj in allObjects) {
             obj.SetActive(false);
@@ -100,8 +116,10 @@ public class Stage1CycleController : MonoBehaviour {
             touch.Initialize(handSkeleton, this);
         }
 
-        if (timerUI != null)
+        if (timerUI != null) {
             timerUI.Hide();
+            timerUI.gameObject.SetActive(false);
+        }
 
         if (dataLogger != null)
             dataLogger.BeginSession(config, handSkeleton);
@@ -114,10 +132,21 @@ public class Stage1CycleController : MonoBehaviour {
         running = true;
         waitingForTouch = false;
         cyclesCompleted = 0;
+        score = 0;
+        if (backToMenuButton != null)
+            backToMenuButton.SetActive(config.endlessMode);
         currentObject = null;
+
+        UpdateScoreUI();
 
         StartNextCycle();
     }
+    public void BackToMenuFromEndlessMode() {
+        FileLogger.Log("BackToMenuFromEndlessMode() called");
+
+        EndStage();
+    }
+
 
     private void FillPool() {
         var shuffled = allObjects.OrderBy(_ => Random.value).ToList();
@@ -174,7 +203,6 @@ public class Stage1CycleController : MonoBehaviour {
 
     private void PrepareObjectForCurrentSettings(GameObject obj) {
         obj.transform.position = GetRandomSpawnPosition();
-        obj.transform.rotation = Quaternion.identity;
 
         if (originalLocalScales.TryGetValue(obj, out Vector3 baseScale))
             obj.transform.localScale = baseScale * GetScaleMultiplierForCurrentSetting();
@@ -189,7 +217,15 @@ public class Stage1CycleController : MonoBehaviour {
             spawnReference.right * Random.Range(-horizontalSpread, horizontalSpread) +
             spawnReference.up * Random.Range(-verticalSpread, verticalSpread);
 
-        return basePos + offset;
+        float baseDownOffset = 0.15f;
+        float largeBalloonExtraDownOffset = 0.12f;
+
+        float downOffset = baseDownOffset;
+
+        if (config != null && config.targetSize == TargetSize.Large)
+            downOffset += largeBalloonExtraDownOffset;
+
+        return basePos + offset + Vector3.down * downOffset;
     }
 
     private float GetDistanceForCurrentSetting() {
@@ -233,8 +269,10 @@ public class Stage1CycleController : MonoBehaviour {
 
     private IEnumerator RunInstantCycle() {
         if (!config.useTimeLimit) {
-            if (timerUI != null)
+            if (timerUI != null) {
                 timerUI.Hide();
+                timerUI.gameObject.SetActive(false);
+            }
 
             while (!isCurrentObjectTouched && running) {
                 SampleData();
@@ -280,8 +318,10 @@ public class Stage1CycleController : MonoBehaviour {
 
         if (config.useTimeLimit && timerUI != null)
             timerUI.SetTime(remaining);
-        else if (timerUI != null)
+        else if (timerUI != null) {
             timerUI.Hide();
+            timerUI.gameObject.SetActive(false);
+        }
 
         while (running) {
             if (isCurrentObjectTouched) {
@@ -291,8 +331,6 @@ public class Stage1CycleController : MonoBehaviour {
 
                 untouchedTime = 0f;
                 wasTouchingPreviously = true;
-
-                // Timer pauses while touching.
             }
             else {
                 currentContinuousTouchSeconds = 0f;
@@ -349,11 +387,15 @@ public class Stage1CycleController : MonoBehaviour {
 
         cyclesCompleted++;
 
+        UpdateScoreUI();
+
         if (showRedZeroSeconds > 0f)
             yield return new WaitForSeconds(showRedZeroSeconds);
 
-        if (timerUI != null)
+        if (timerUI != null) {
             timerUI.Hide();
+            timerUI.gameObject.SetActive(false);
+        }
 
         if (timeoutPauseSeconds > showRedZeroSeconds)
             yield return new WaitForSeconds(timeoutPauseSeconds - showRedZeroSeconds);
@@ -364,18 +406,53 @@ public class Stage1CycleController : MonoBehaviour {
     private void CompleteCycleSuccess() {
         float totalTime = Time.time - cycleStartTime;
 
-        if (timerUI != null)
+        if (timerUI != null) {
             timerUI.Hide();
+            timerUI.gameObject.SetActive(false);
+        }
 
-        if (currentObject != null)
-            currentObject.SetActive(false);
+        if (currentObject != null) {
+            Stage1TouchDisappear touchDisappear = currentObject.GetComponent<Stage1TouchDisappear>();
+
+            if (touchDisappear != null)
+                touchDisappear.Pop();
+            else
+                currentObject.SetActive(false);
+        }
 
         if (dataLogger != null)
             dataLogger.EndCycle("Success", totalTime, maxContinuousTouchSeconds);
 
         cyclesCompleted++;
+        score++;
 
-        FileLogger.Log($"Cycle success. cyclesCompleted={cyclesCompleted}");
+        UpdateScoreUI();
+
+        FileLogger.Log($"Cycle success. score={score}, cyclesCompleted={cyclesCompleted}");
+    }
+
+    private void UpdateScoreUI() {
+        if (scoreUI == null)
+            return;
+
+        scoreUI.Show();
+
+        if (config != null && config.endlessMode)
+            scoreUI.SetScore(score, 0, true);
+        else
+            scoreUI.SetScore(score, config != null ? config.trialsAmount : 0, false);
+    }
+
+    private void ShowFinalScoreUI() {
+        if (scoreUI == null)
+            return;
+
+        scoreUI.Show();
+
+        if (config != null && config.endlessMode)
+            scoreUI.SetFinalScore(score, 0, true);
+        else
+            scoreUI.SetFinalScore(score, config != null ? config.trialsAmount : cyclesCompleted, false);
     }
 
     private void SampleData() {
@@ -393,7 +470,7 @@ public class Stage1CycleController : MonoBehaviour {
         isCurrentObjectTouched = isTouching;
     }
 
-    private void EndStage() {
+    public void EndStage() {
         FileLogger.Log("EndStage() ENTERED");
 
         running = false;
@@ -404,12 +481,36 @@ public class Stage1CycleController : MonoBehaviour {
             cycleCoroutine = null;
         }
 
+        // Log final session score
+        if (dataLogger != null)
+            dataLogger.EndSessionScore(score, cyclesCompleted);
+
+        if (timerUI != null) {
+            timerUI.Hide();
+            timerUI.gameObject.SetActive(false);
+        }
+
+        if (backToMenuButton != null)
+            backToMenuButton.SetActive(false);
+
+        if (scoreUI != null)
+            scoreUI.gameObject.SetActive(false);
+
+        // Hide all objects FIRST
         if (currentObject != null)
             currentObject.SetActive(false);
 
-        if (timerUI != null)
-            timerUI.Hide();
+        foreach (var obj in allObjects) {
+            if (obj == null)
+                continue;
 
+            if (originalLocalScales.TryGetValue(obj, out Vector3 baseScale))
+                obj.transform.localScale = baseScale;
+
+            obj.SetActive(false);
+        }
+
+        // Then hide parent
         if (objectsParent != null)
             objectsParent.gameObject.SetActive(false);
 

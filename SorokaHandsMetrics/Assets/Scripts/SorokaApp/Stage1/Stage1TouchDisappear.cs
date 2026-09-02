@@ -1,3 +1,4 @@
+﻿using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 
@@ -5,12 +6,22 @@ public class Stage1TouchDisappear : MonoBehaviour {
     [Header("Touch Detection")]
     [SerializeField] private float touchThresholdMeters = 0.015f;
 
+    [Header("Pop Effect")]
+    [SerializeField] private AudioClip popSound;
+    [SerializeField] private float popDuration = 0.25f;
+    [SerializeField] private float scaleUpMultiplier = 1.4f;
+
     private OVRSkeleton skeleton;
     private Stage1CycleController controller;
     private Collider targetCollider;
 
     private readonly List<Transform> fingertipBones = new List<Transform>();
-    private bool initialized = false;
+
+    private bool initialized;
+    private bool hasPopped;
+
+    private Material materialInstance;
+    private Color originalColor;
 
     public void Initialize(OVRSkeleton handSkeleton, Stage1CycleController cycleController) {
         skeleton = handSkeleton;
@@ -19,47 +30,79 @@ public class Stage1TouchDisappear : MonoBehaviour {
 
         fingertipBones.Clear();
         initialized = false;
+        hasPopped = false;
 
-        if (skeleton == null) {
-            FileLogger.Log($"Stage1TouchDisappear: skeleton is null for {gameObject.name}");
+        if (skeleton == null || controller == null || targetCollider == null)
             return;
-        }
-
-        if (controller == null) {
-            FileLogger.Log($"Stage1TouchDisappear: controller is null for {gameObject.name}");
-            return;
-        }
-
-        if (targetCollider == null) {
-            FileLogger.Log($"Stage1TouchDisappear: {gameObject.name} has no collider.");
-            return;
-        }
 
         CacheFingertips();
 
-        if (fingertipBones.Count == 0) {
-            FileLogger.Log($"Stage1TouchDisappear: no fingertip bones found for {gameObject.name}");
+        if (fingertipBones.Count == 0)
             return;
+
+        Renderer rend = GetComponentInChildren<Renderer>();
+        if (rend != null) {
+            materialInstance = rend.material;
+            originalColor = materialInstance.color;
         }
 
         initialized = true;
-        FileLogger.Log($"Stage1TouchDisappear initialized for {gameObject.name}, fingertips={fingertipBones.Count}");
     }
 
     private void Update() {
-        if (!initialized)
-            return;
-
-        if (!gameObject.activeInHierarchy)
+        if (!initialized || !gameObject.activeInHierarchy)
             return;
 
         bool isTouching = IsAnyFingertipTouching();
+
+        // Only report touch state.
+        // The controller decides when the cycle is actually successful.
         controller.SetCurrentObjectTouchState(gameObject, isTouching);
     }
 
+    public void Pop() {
+        if (!initialized || hasPopped || !gameObject.activeInHierarchy)
+            return;
+
+        StartCoroutine(PopRoutine());
+    }
+
+    private IEnumerator PopRoutine() {
+        hasPopped = true;
+
+        if (popSound != null)
+            AudioSource.PlayClipAtPoint(popSound, transform.position, 0.8f);
+
+        Vector3 originalScale = transform.localScale;
+        float t = 0f;
+
+        while (t < popDuration) {
+            t += Time.deltaTime;
+            float p = Mathf.Clamp01(t / popDuration);
+
+            transform.localScale = Vector3.Lerp(originalScale, originalScale * scaleUpMultiplier, p);
+
+            if (materialInstance != null) {
+                Color c = originalColor;
+                c.a = Mathf.Lerp(1f, 0f, p);
+                materialInstance.color = c;
+            }
+
+            yield return null;
+        }
+
+        gameObject.SetActive(false);
+
+        transform.localScale = originalScale;
+
+        if (materialInstance != null)
+            materialInstance.color = originalColor;
+
+        hasPopped = false;
+    }
+
     private bool IsAnyFingertipTouching() {
-        for (int i = 0; i < fingertipBones.Count; i++) {
-            Transform tip = fingertipBones[i];
+        foreach (var tip in fingertipBones) {
             if (tip == null) continue;
 
             Vector3 tipPosition = tip.position;

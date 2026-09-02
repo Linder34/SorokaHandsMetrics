@@ -1,0 +1,137 @@
+I want to build a web application for analyzing VR hand-tracking rehabilitation data from CSV files.
+
+📂 Data Input
+
+The app must support uploading two CSV files:
+
+1. Trajectory CSV (time-series data)
+Recorded at ~30 FPS
+Contains:
+Hand 3D positions (e.g., wrist + fingers)
+Object transform (position + rotation)
+The file structure includes:
+Multiple sessions
+Each session starts with a settings/config row
+After the settings row, multiple cycles follow
+
+👉 Important:
+
+A single CSV file can contain multiple sessions
+The system must:
+Detect session boundaries using the settings row
+Group data into: Session → Cycles → Frames
+2. Results CSV (summary metrics)
+Contains per-cycle metrics such as:
+TotalTime
+MaxOpenness
+InitialDistance
+DistancePalmOpened
+Each row corresponds to a cycle
+🎯 Core Features
+📊 1. Simple Progress Graphs (Over Time)
+
+Create clean, therapist-friendly graphs showing progress over time:
+
+Line charts per session:
+Total Time per cycle
+Max Openness
+DistancePalmOpened
+Allow:
+Viewing trends across sessions
+Highlighting improvement or decline
+Include simple indicators like:
+“Improving”
+“Stable”
+“Worsening”
+⚖️ 2. Clear “Good vs Bad” Comparisons
+
+Create visual comparisons that are easy to interpret:
+
+Compare:
+Best vs Worst cycle in a session
+Early vs Late cycles (fatigue or learning)
+Use:
+Bar charts
+Side-by-side panels
+Automatically highlight:
+Best performance (green)
+Worst performance (red)
+🧠 3. 3D Hand Trajectory Visualization (Main Feature)
+
+Create an interactive 3D viewer using WebGL (e.g., Three.js):
+
+Features:
+Plot the full hand trajectory in 3D space over time
+Allow:
+Rotate / zoom / pan camera
+Select Session
+Select one or multiple Cycles
+Overlay multiple cycles (with different colors)
+Object Integration:
+Render the object using its transform (position/rotation)
+🟡 Time Scrubbing (Very Important)
+
+Add a time slider (scrubber) that:
+
+Allows moving frame-by-frame through the trajectory
+At each time frame:
+Display the hand pose at that exact moment
+NOT just the final pose
+As the user scrubs:
+The hand should update smoothly over time
+This should visually show the movement progression
+
+👉 The hand pose should be reconstructed using available joint/point data
+👉 Movement should feel continuous and smooth
+
+🧮 4. One-Number Score per Session
+
+Create a single performance score per session for therapists.
+
+The score should combine:
+
+Speed (TotalTime)
+Accuracy (DistancePalmOpened or similar)
+Control (MaxOpenness or smoothness proxy)
+Requirements:
+Normalize metrics
+Combine into a score (0–100)
+Display:
+Score per session
+Trend over sessions
+Optionally show:
+Breakdown of score components
+🎛️ Filtering & Controls
+Select:
+Session
+Cycle(s)
+Toggle:
+Show multiple cycles together
+Enable:
+Easy switching between sessions
+🧑‍⚕️ UI Requirements
+Clean, simple dashboard for therapists
+Focus on clarity, not technical complexity
+Include:
+Graph panels
+3D viewer
+Score summary
+Allow exporting:
+Graphs as images
+Data as CSV
+⚙️ Tech Preferences
+Frontend: React
+3D: Three.js
+Charts: modern charting library (e.g., Recharts or Chart.js)
+🎯 Goal
+
+The goal is to help therapists:
+
+Understand patient progress over time
+Compare good vs bad performance easily
+Visually inspect movement quality using 3D trajectories
+Get a simple overall score per session
+🔥 Bonus (if possible)
+Smooth animation playback (play/pause in addition to scrubbing)
+Color trajectory by speed or time
+Show multiple trajectories as a “cloud” to visualize consistency

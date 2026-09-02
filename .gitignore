@@ -70,3 +70,7 @@ crashlytics-build.properties
 # Temporary auto-generated Android Assets
 [Aa]ssets/[Ss]treamingAssets/aa.meta
 [Aa]ssets/[Ss]treamingAssets/aa/*
+SorokaHandsMetrics/soroka_app_v0.zip
+# Large files kept locally only
+/SorokaHandsMetrics/soroka_app_v0.zip
+/SorokaHandsMetrics/Assets/Downloaded Objects/lowpoly_fruits__vegetables.glb

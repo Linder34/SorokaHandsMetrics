@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.IO;
 using UnityEngine;
 
@@ -195,11 +195,50 @@ public class Stage1HandDataLogger : MonoBehaviour {
             $"{distanceAt30:F4}," +
             $"{t.position.x:F6},{t.position.y:F6},{t.position.z:F6}," +
             $"{t.rotation.x:F6},{t.rotation.y:F6},{t.rotation.z:F6},{t.rotation.w:F6}," +
-            $"{t.localScale.x:F6},{t.localScale.y:F6},{t.localScale.z:F6}";
+            $"{t.localScale.x:F6},{t.localScale.y:F6},{t.localScale.z:F6}," +
+            ",,,";
 
         File.AppendAllText(ResultsPath, row + "\n");
 
         FileLogger.Log($"Stage1HandDataLogger: EndCycle cycle={currentCycleIndex}, result={result}");
+    }
+
+    public void EndSessionScore(int score, int totalCycles) {
+        if (config == null)
+            return;
+
+        float successRate = totalCycles > 0
+            ? ((float)score / totalCycles) * 100f
+            : 0f;
+
+        string row =
+            "SessionScore," +
+            $"{subjectId}," +
+            $"{sessionId}," +
+            $"{UnixTime():F3}," +
+            "Stage1," +
+            $"{config.handSelection}," +
+            $"{config.endlessMode}," +
+            $"{config.trialsAmount}," +
+            $"{config.useTimeLimit}," +
+            $"{config.timeLimitSeconds:F2}," +
+            $"{config.targetDistance}," +
+            $"{config.targetSize}," +
+            $"{config.touchMode}," +
+            $"{config.holdDurationSeconds:F2}," +
+
+            // Empty fields from CycleIndex through ObjectScale_z
+            ",,,,,,,,,,,,,,,,,,," +
+
+            $"{score}," +
+            $"{totalCycles}," +
+            $"{successRate:F2}";
+
+        File.AppendAllText(ResultsPath, row + "\n");
+
+        FileLogger.Log(
+            $"Stage1HandDataLogger: Session score saved | Score={score}, Total={totalCycles}, SuccessRate={successRate:F1}%"
+        );
     }
 
     private void WriteSettingsRows() {
@@ -218,7 +257,7 @@ public class Stage1HandDataLogger : MonoBehaviour {
             $"{config.targetSize}," +
             $"{config.touchMode}," +
             $"{config.holdDurationSeconds:F2}," +
-            ",,,,,,,,,,,,,,";
+            ",,,,,,,,,,,,,,,,,";
 
         File.AppendAllText(ResultsPath, settingsResultsRow + "\n");
 
@@ -250,7 +289,8 @@ public class Stage1HandDataLogger : MonoBehaviour {
             ResultsPath,
             "RowType,Subject,SessionID,UnixTime_s,Stage,HandSelection,EndlessMode,TrialsAmount,UseTimeLimit,TimeLimitSeconds,TargetDistance,TargetSize,TouchMode,HoldDurationSeconds," +
             "CycleIndex,ObjectName,CycleResult,TotalTime_s,MaxContinuousTouch_s,MaxOpenness_pct,MaxOpennessDist_m,InitialDistance_m,DistancePalmOpened_m," +
-            "ObjectPos_x,ObjectPos_y,ObjectPos_z,ObjectRot_x,ObjectRot_y,ObjectRot_z,ObjectRot_w,ObjectScale_x,ObjectScale_y,ObjectScale_z\n"
+            "ObjectPos_x,ObjectPos_y,ObjectPos_z,ObjectRot_x,ObjectRot_y,ObjectRot_z,ObjectRot_w,ObjectScale_x,ObjectScale_y,ObjectScale_z," +
+            "SessionScore,SessionTotalCycles,SessionSuccessRatePercent\n"
         );
     }
 
@@ -334,5 +374,6 @@ public class Stage1HandDataLogger : MonoBehaviour {
 
     private static int Bool01(bool value) {
         return value ? 1 : 0;
+
     }
 }
